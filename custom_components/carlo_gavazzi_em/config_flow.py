@@ -290,15 +290,10 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
                 description_placeholders=self._progress_placeholders,
             )
 
-        # The frontend cannot render progress_done (no DataEntryFlowStep member,
-        # no render branch, no footer button), so the dialog would stay stuck on
-        # the progress bar and the flow would leak. Instead: hand over to the
-        # summary form and fire ONE refetch notification after cur_step is set.
-        # call_soon runs only once the current task (call_configure) completes,
-        # by which time _async_configure has already assigned flow.cur_step, so
-        # the refetch GET deterministically returns the finish form.
-        self.hass.loop.call_soon(self.async_notify_flow_changed)
-        return await self.async_step_finish()
+        # Home Assistant only allows a progress step to be followed by another
+        # progress step or progress_done, so hand over to the summary form via
+        # progress_done rather than returning the form directly.
+        return self.async_show_progress_done(next_step_id="finish")
 
     async def _async_discover(self) -> list[MeterInfo]:
         """Create the API lazily and run the discovery scan."""

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Fixed the discovery progress step raising `Show progress can only transition to show progress or show progress done` by finishing with `progress_done` before the summary form.
+
 ## 1.1.0
 
 - Added EM24 (EM24DINAV) meter support with its own identification codes, full read-only register map, and signed 16-bit decoding.
