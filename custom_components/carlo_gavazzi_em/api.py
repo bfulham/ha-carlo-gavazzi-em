@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any
 
 from .const import (
@@ -113,6 +114,19 @@ READ_BLOCKS_EM24 = _build_read_blocks(
     SENSOR_DESCRIPTIONS_EM24,
     MAX_MODBUS_READ_WORDS_EM24,
 )
+
+
+@lru_cache(maxsize=64)
+def blocks_for(model_family: str, keys: frozenset[str] | None) -> tuple[ReadBlock, ...]:
+    """Return the read blocks for the enabled sensor keys (None = every sensor)."""
+    em24 = model_family == "em24"
+    if keys is None:
+        return READ_BLOCKS_EM24 if em24 else READ_BLOCKS
+    descriptions = SENSOR_DESCRIPTIONS_EM24 if em24 else SENSOR_DESCRIPTIONS
+    return _build_read_blocks(
+        tuple(item for item in descriptions if item.key in keys),
+        MAX_MODBUS_READ_WORDS_EM24 if em24 else MAX_MODBUS_READ_WORDS,
+    )
 
 
 class CarloGavazziAPI:
@@ -309,30 +323,33 @@ class CarloGavazziAPI:
     async def async_fetch_all_meter_data(
         self,
         meters: list[MeterInfo],
+        enabled: dict[str, frozenset[str]] | None = None,
     ) -> dict[str, dict[str, Any]]:
-        """Read all documented values using contiguous blocks."""
+        """Read the enabled values using contiguous blocks.
+
+        enabled maps each meter's unique_key to the sensor keys that are enabled in
+        Home Assistant; only registers behind those are requested. None reads all.
+        """
         attempts = max(
             1,
             int(self._config.get(CONF_REQUEST_RETRIES, DEFAULT_REQUEST_RETRIES)) + 1,
         )
         data: dict[str, dict[str, Any]] = {}
+        attempted_blocks = 0
         any_success = False
 
         for meter in meters:
-            descriptions = (
-                SENSOR_DESCRIPTIONS_EM24
-                if meter.model_family == "em24"
-                else SENSOR_DESCRIPTIONS
+            keys = (
+                None if enabled is None else enabled.get(meter.unique_key, frozenset())
             )
-            blocks = (
-                READ_BLOCKS_EM24 if meter.model_family == "em24" else READ_BLOCKS
-            )
+            blocks = blocks_for(meter.model_family, keys)
             values: dict[str, list[int] | None] = {
-                description.key: None for description in descriptions
+                item.key: None for block in blocks for item in block.descriptions
             }
             successful_blocks = 0
 
             for block in blocks:
+                attempted_blocks += 1
                 registers = await self.client.async_read_holding_registers(
                     meter.slave_id,
                     block.address,
@@ -350,13 +367,13 @@ class CarloGavazziAPI:
                     ]
 
             data[meter.unique_key] = {
-                "available": successful_blocks > 0,
+                "available": successful_blocks > 0 or not blocks,
                 "successful_blocks": successful_blocks,
                 "total_blocks": len(blocks),
                 "values": values,
             }
 
-        if not any_success:
+        if attempted_blocks and not any_success:
             raise ModbusGatewayError("No meter returned any register data")
         return data
 

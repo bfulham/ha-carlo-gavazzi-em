@@ -2,6 +2,9 @@
 
 ## 1.1.3
 
+- Only volts, amps, watts and energy used are enabled by default; every other sensor (VA, VAR, power factor, demand, the TCD channels and the diagnostics) is created disabled and can be enabled from the entity settings.
+- Disabled sensors are no longer polled. Each poll reads only the registers behind enabled entities, so a meter with the default set needs 3 reads (EM270/EM280) or 6 (EM24) instead of 24 or 16. Enabling an entity takes effect after Home Assistant's automatic reload.
+- One-time migration (config entry version 2): sensors already created by earlier versions are disabled unless they are in the default set, so existing installs stop polling them too. Re-enable any you want afterwards.
 - A no-response read (silent meter, or a gateway exception pymodbus discards) no longer closes a healthy Modbus TCP connection, so scans and polls reuse one socket instead of reconnecting for every silent address. RTU-over-TCP framing still reconnects to resync.
 
 ## 1.1.2

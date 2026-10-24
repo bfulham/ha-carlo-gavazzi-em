@@ -15,7 +15,7 @@ A local, read-only Home Assistant custom integration for Carlo Gavazzi **EM270 X
 - Automatic probing of standard Modbus TCP and RTU-over-TCP framing, or an explicit user-selected mode.
 - Automatic EM270/EM280/EM24 model identification.
 - Serial number, model, model ID, and firmware stored as Home Assistant device information rather than duplicate sensors.
-- All documented read-only measurement and diagnostic registers exposed as sensors for EM270/EM280 and EM24 meters.
+- All documented read-only measurement and diagnostic registers available as sensors for EM270/EM280 and EM24 meters; volts, amps, watts and energy used are enabled by default and only enabled sensors are polled.
 - Configurable update interval, timeout, retry count, and delay between requests.
 - Contiguous reads limited to the protocol maximum of 18 registers.
 - LSW/MSW 32-bit decoding and handling for the documented unsupported, overflow, and missing-TCD values.
@@ -79,7 +79,7 @@ A full scan can take several minutes because unused RTU addresses may each wait 
 
 Each discovered meter is represented as its own Home Assistant device. The meter serial number is used as device metadata and as the stable device identifier when available. A gateway/address fallback identifier is used when the serial number cannot be read. EM24 meters expose no serial number or secondary address, so they always use the gateway/address fallback identifier.
 
-The complete documented read-only entity set is created for every meter. Variables that are unavailable for a specific model, firmware, measuring system, TCD arrangement, or SUM/Virtual configuration remain unavailable instead of reporting a false value.
+Only the useful sensors are enabled by default: phase voltages, phase currents, power (W) and energy used (kWh import, plus kWh export on the EM24). The rest of the documented read-only entity set (VA, VAR, power factor, demand, TCD channels and diagnostics) is created for every meter but **disabled**, and a disabled entity is **not polled**, so it adds no traffic on the RS-485 bus. Enable any of them under Settings -> Devices & services -> the entity -> Settings; the integration reloads and starts polling that register. Variables that are unavailable for a specific model, firmware, measuring system, TCD arrangement, or SUM/Virtual configuration remain unavailable instead of reporting a false value.
 
 ## Reconfigure and options
 

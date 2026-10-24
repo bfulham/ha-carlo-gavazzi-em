@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -1619,6 +1619,44 @@ SENSOR_DESCRIPTIONS_EM24: tuple[RegisterSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
     ),
 )
+
+
+# Only these are enabled by default: volts, amps, watts and energy used. Every other
+# variable is registered disabled, and a disabled entity is not polled (see
+# CarloGavazziAPI.async_fetch_all_meter_data), so the extras cost no bus traffic
+# until someone enables them. The keys cover both model families.
+DEFAULT_ENABLED_KEYS: frozenset[str] = frozenset(
+    {
+        "v_l1_n",
+        "v_l2_n",
+        "v_l3_n",
+        "a_l1_sum",  # EM270 / EM280
+        "a_l2_sum",
+        "a_l3_sum",
+        "a_l1",  # EM24
+        "a_l2",
+        "a_l3",
+        "w_sum",
+        "w_l1",  # EM24 per-phase power
+        "w_l2",
+        "w_l3",
+        "kwh_import_total",
+        "kwh_export_total",  # EM24
+    }
+)
+
+
+def _enabled_by_default(
+    descriptions: tuple[RegisterSensorDescription, ...],
+) -> tuple[RegisterSensorDescription, ...]:
+    return tuple(
+        replace(item, entity_registry_enabled_default=item.key in DEFAULT_ENABLED_KEYS)
+        for item in descriptions
+    )
+
+
+SENSOR_DESCRIPTIONS = _enabled_by_default(SENSOR_DESCRIPTIONS)
+SENSOR_DESCRIPTIONS_EM24 = _enabled_by_default(SENSOR_DESCRIPTIONS_EM24)
 
 
 def map_option(

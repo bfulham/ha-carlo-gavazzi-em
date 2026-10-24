@@ -1,6 +1,8 @@
 [tool.ruff]
 line-length = 88
 target-version = "py313"
+# contrib/ holds scripts that run on the gateways (Python 2.7), not Home Assistant code
+extend-exclude = ["contrib"]
 
 [tool.ruff.lint]
 select = ["ASYNC", "B", "E", "F", "I", "UP"]
