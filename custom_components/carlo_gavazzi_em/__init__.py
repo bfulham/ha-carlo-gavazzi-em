@@ -26,13 +26,15 @@ type CarloGavazziRuntimeData = dict[str, Any]
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Version 2: only volts, amps, watts and energy stay enabled by default.
+    """Bring the entity registry in line with DEFAULT_ENABLED_KEYS.
 
-    Entities created by version 1 were all enabled. Disable the ones that are not
-    in DEFAULT_ENABLED_KEYS once, so existing installs stop polling them too. They
-    can be enabled again from the entity settings.
+    Version 1 -> 3: entities were all enabled; disable the ones outside the default
+    set once, so existing installs stop polling them. Version 2 -> 3: the default set
+    grew (TCDA1 per-phase power and energy), so re-enable default sensors that the
+    integration itself disabled. Sensors the user disabled are never touched, and
+    anything can be switched from the entity settings afterwards.
     """
-    if entry.version == 1:
+    if entry.version < 3:
         from .registers import DEFAULT_ENABLED_KEYS
 
         registry = er.async_get(hass)
@@ -41,17 +43,27 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             for meter in entry.data.get(CONF_METERS, [])
         ]
         for entity in er.async_entries_for_config_entry(registry, entry.entry_id):
-            if entity.domain != "sensor" or entity.disabled:
+            if entity.domain != "sensor":
                 continue
-            for prefix in prefixes:
-                if entity.unique_id.startswith(prefix):
-                    if entity.unique_id[len(prefix) :] not in DEFAULT_ENABLED_KEYS:
-                        registry.async_update_entity(
-                            entity.entity_id,
-                            disabled_by=er.RegistryEntryDisabler.INTEGRATION,
-                        )
-                    break
-        hass.config_entries.async_update_entry(entry, version=2)
+            key = next(
+                (
+                    entity.unique_id[len(prefix) :]
+                    for prefix in prefixes
+                    if entity.unique_id.startswith(prefix)
+                ),
+                None,
+            )
+            if key is None:
+                continue
+            if key in DEFAULT_ENABLED_KEYS:
+                if entity.disabled_by is er.RegistryEntryDisabler.INTEGRATION:
+                    registry.async_update_entity(entity.entity_id, disabled_by=None)
+            elif entry.version == 1 and not entity.disabled:
+                registry.async_update_entity(
+                    entity.entity_id,
+                    disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+                )
+        hass.config_entries.async_update_entry(entry, version=3)
     return True
 
 

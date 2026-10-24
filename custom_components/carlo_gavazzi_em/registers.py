@@ -1640,6 +1640,14 @@ DEFAULT_ENABLED_KEYS: frozenset[str] = frozenset(
         "w_l1",  # EM24 per-phase power
         "w_l2",
         "w_l3",
+        # EM270 / EM280 only report per-phase power and energy through the TCD A1
+        # channel, so these are the per-phase "watts" and "usage" for those meters.
+        "tcda1_w_l1",
+        "tcda1_w_l2",
+        "tcda1_w_l3",
+        "tcda1_kwh_l1",
+        "tcda1_kwh_l2",
+        "tcda1_kwh_l3",
         "kwh_import_total",
         "kwh_export_total",  # EM24
     }

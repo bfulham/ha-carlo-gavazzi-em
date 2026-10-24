@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.1.4
+
+- Enabled by default for EM270/EM280: TCDA1 W L1-L3 and TCDA1 kWh L1-L3. These meters only report per-phase power and energy through the TCD A1 channel, so they are the per-phase watts and usage. (Sensors for TCDA2 and everything else stay disabled until you enable them.)
+- Config entry version 3 migration: default sensors that 1.1.3 had disabled (the TCDA1 per-phase ones) are enabled again. Sensors you disabled yourself are left alone.
+
 ## 1.1.3
 
 - Only volts, amps, watts and energy used are enabled by default; every other sensor (VA, VAR, power factor, demand, the TCD channels and the diagnostics) is created disabled and can be enabled from the entity settings.
