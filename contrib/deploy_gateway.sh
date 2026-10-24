@@ -168,15 +168,47 @@ fi
 if [ "$VERIFY" != 1 ]; then say "Done - gateway is rebooting onto $NEWIP"; exit 0; fi
 
 # ---- wait for it, then check ----------------------------------------------------
-say "Waiting for the gateway to come back on $NEWIP"
-sleep 20
-up=0
+port_open() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$SSH_PORT" 2>/dev/null; }
+
+say "Waiting for the gateway to reboot"
+if [ "$FROM" != "$NEWIP" ]; then
+    went_down=0
+    for _ in $(seq 1 30); do
+        if ! port_open "$FROM"; then went_down=1; break; fi
+        printf '.'; sleep 4
+    done
+    echo
+    if [ "$went_down" != 1 ]; then
+        die "$FROM is still answering 2 minutes after the installer finished - the gateway did not reboot. Try: ssh $USER_NAME@$FROM reboot"
+    fi
+else
+    sleep 20
+fi
+
+say "Waiting for the gateway to come back (on $NEWIP, or on $FROM if the new address did not apply)"
+up=""
 for _ in $(seq 1 60); do
-    if timeout 3 bash -c "exec 3<>/dev/tcp/$NEWIP/$SSH_PORT" 2>/dev/null; then up=1; break; fi
+    if port_open "$NEWIP"; then up=new; break; fi
+    if [ "$FROM" != "$NEWIP" ] && port_open "$FROM"; then up=old; break; fi
     printf '.'; sleep 5
 done
 echo
-[ "$up" = 1 ] || die "the gateway did not answer on $NEWIP within 5 minutes - check its network settings"
+if [ -z "$up" ]; then
+    die "the gateway answered on neither $NEWIP nor $FROM within 5 minutes - it may need a power cycle or a console cable"
+fi
+if [ "$up" = old ]; then
+    say "The gateway is back on its OLD address ($FROM): the new IP did not apply"
+    info "its network configuration, so you can see what is overriding it:"
+    DIAG='echo "--- /etc/network/interfaces"; cat /etc/network/interfaces;
+echo "--- /etc/network/interfaces.d"; ls /etc/network/interfaces.d 2>&1;
+echo "--- /etc/dhcpcd.conf (active lines)"; grep -v "^#" /etc/dhcpcd.conf 2>/dev/null | grep -v "^$";
+echo "--- eth0 now"; ip -4 addr show eth0;
+echo "--- network services"; for u in networking dhcpcd systemd-networkd NetworkManager; do echo "$u: $(systemctl is-active $u 2>&1)"; done;
+echo "--- files that mention the current address"; grep -rIl "$(ip -4 -o addr show eth0 | awk "{print \$4}" | cut -d/ -f1)" /etc 2>/dev/null'
+    sshx "$USER_NAME@$FROM" "$DIAG" 2>&1 | sed 's/^/   /'
+    close_mux "$FROM"
+    exit 1
+fi
 
 say "Checking the gateway on $NEWIP"
 sleep 5

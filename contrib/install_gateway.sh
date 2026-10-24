@@ -185,6 +185,26 @@ configure_network() {
         else echo "denyinterfaces $IFACE" >> "$ROOT/etc/dhcpcd.conf"; fi
     fi
     info "the new address ($IP) takes effect after a reboot - not applied now so this session survives"
+    check_ip_sources
+}
+
+check_ip_sources() {            # warn if the address eth0 has now is also set somewhere we did not edit
+    local cur others
+    cur=$(ip -4 -o addr show "$IFACE" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)
+    [ -n "$cur" ] || return 0
+    others=$(grep -rIlF -- "$cur" "$ROOT/etc" 2>/dev/null | grep -v -e "/modbus-installer-backups/" -e "/etc/network/interfaces$" -e '\.bak' | head -10)
+    if [ -n "$others" ]; then
+        warn "the current address $cur also appears in:"
+        printf '%s\n' "$others" | sed 's/^/        /' >&2
+        warn "if the new IP does not stick after the reboot, one of those is overriding it"
+    fi
+    if [ -d "$ROOT/etc/network/interfaces.d" ] && grep -qsE "^[[:space:]]*iface[[:space:]]+$IFACE[[:space:]]" "$ROOT"/etc/network/interfaces.d/* 2>/dev/null; then
+        warn "/etc/network/interfaces.d also defines $IFACE - it may override the new address:"
+        grep -lsE "^[[:space:]]*iface[[:space:]]+$IFACE[[:space:]]" "$ROOT"/etc/network/interfaces.d/* | sed 's/^/        /' >&2
+    fi
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-enabled dhcpcd >/dev/null 2>&1; then
+        info "dhcpcd is enabled; 'denyinterfaces $IFACE' keeps it away from the static address"
+    fi
 }
 
 comment_techbase_lines() {      # comment_techbase_lines FILE
