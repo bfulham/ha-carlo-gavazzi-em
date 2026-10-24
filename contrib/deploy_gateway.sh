@@ -173,13 +173,20 @@ port_open() { timeout 3 bash -c "exec 3<>/dev/tcp/$1/$SSH_PORT" 2>/dev/null; }
 say "Waiting for the gateway to reboot"
 if [ "$FROM" != "$NEWIP" ]; then
     went_down=0
-    for _ in $(seq 1 30); do
+    nudged=0
+    for i in $(seq 1 45); do
         if ! port_open "$FROM"; then went_down=1; break; fi
+        if [ "$i" -ge 20 ] && [ "$nudged" = 0 ]; then
+            echo
+            info "still up 80 s after the installer finished - asking it to reboot (you may be asked for the password)"
+            sshx "$USER_NAME@$FROM" "setsid -f sh -c 'sleep 2; reboot' >/dev/null 2>&1 </dev/null" >/dev/null 2>&1
+            nudged=1
+        fi
         printf '.'; sleep 4
     done
     echo
     if [ "$went_down" != 1 ]; then
-        die "$FROM is still answering 2 minutes after the installer finished - the gateway did not reboot. Try: ssh $USER_NAME@$FROM reboot"
+        die "$FROM is still answering 3 minutes after the installer finished - the gateway did not reboot. Try: ssh $USER_NAME@$FROM reboot"
     fi
 else
     sleep 20

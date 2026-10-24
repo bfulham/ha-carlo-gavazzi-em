@@ -107,12 +107,27 @@ class SerialBus(object):
             buf.extend(chunk)
         return buf
 
+    def _write(self, data, timeout=1.0):
+        """Write all of data to the non-blocking port; False if it will not drain."""
+        end = time.time() + timeout
+        while data:
+            try:
+                data = data[os.write(self.fd, data):]
+            except OSError as err:
+                if err.errno not in (errno.EAGAIN, errno.EINTR):
+                    raise
+                if time.time() > end:
+                    return False
+                select.select([], [self.fd], [], 0.05)
+        return True
+
     def transact(self, unit, pdu, first_byte_timeout, char_timeout=0.25):
         """Send one request, return the response PDU, or None on failure."""
         frame = bytearray([unit]) + bytearray(pdu)
         frame += bytearray(struct.pack("<H", crc16(frame)))
         termios.tcflush(self.fd, termios.TCIFLUSH)
-        os.write(self.fd, bytes(frame))
+        if not self._write(bytes(frame)):
+            return None
         termios.tcdrain(self.fd)
 
         head = self._read(2, first_byte_timeout)

@@ -336,7 +336,46 @@ EOF
     run systemctl enable "$UNIT_NAME"
 }
 
+schedule_reboot() {         # must outlive the ssh session that runs us
+    if setsid --help 2>&1 | grep -q -- '--fork'; then
+        setsid -f sh -c 'sleep 10; reboot' >/dev/null 2>&1 </dev/null
+    else
+        shutdown -r +1 "modbus gateway install" >/dev/null 2>&1
+    fi
+}
+
+free_serial_port() {        # stop an earlier proxy (manual or service) and report anything else on the port
+    say "Make sure nothing else is using $SERIAL or TCP port $TCP_PORT"
+    run systemctl stop "$UNIT_NAME" >/dev/null 2>&1
+    local pids p holders=""
+    pids=$(ps ax -o pid=,args= 2>/dev/null | awk -v me="$$" '
+        $1 != me && $2 ~ /(^|\/)python[0-9.]*$/ && $3 ~ /(^|\/)modbus_rtu_proxy\.py$/ { print $1 }')
+    if [ -n "$pids" ]; then
+        info "stopping an earlier copy of the proxy (pid $(echo $pids))"
+        if [ "$DRY" != 1 ]; then
+            # shellcheck disable=SC2086
+            kill $pids 2>/dev/null; sleep 2
+            for p in $pids; do kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null; done
+        fi
+    fi
+    if [ "$DRY" != 1 ]; then
+        for p in /proc/[0-9]*; do
+            [ "${p#/proc/}" = "$$" ] && continue
+            if ls -l "$p/fd" 2>/dev/null | grep -qF -- "$SERIAL"; then holders="$holders ${p#/proc/}"; fi
+        done
+        if [ -n "$holders" ]; then
+            warn "$SERIAL is still open by:"
+            for p in $holders; do ps -o pid=,args= -p "$p" 2>/dev/null | cut -c1-110 | sed 's/^/        /' >&2; done
+        fi
+        if netstat -tlnp 2>/dev/null | grep -q ":$TCP_PORT "; then
+            warn "something is still listening on TCP $TCP_PORT:"
+            netstat -tlnp 2>/dev/null | grep ":$TCP_PORT " | sed 's/^/        /' >&2
+        fi
+    fi
+}
+
 scan_bus() {
+    free_serial_port
     say "Scan the bus for meters (units $SCAN_FIRST-$SCAN_LAST)"
     if [ "$SKIP_SCAN" = 1 ]; then info "skipped (--skip-scan)"; return; fi
     if [ "$DRY" = 1 ]; then info "[dry-run] would scan $SERIAL"; return; fi
@@ -392,8 +431,8 @@ summary() {
         warn "no meters answered. Check wiring, A/B polarity, baud/parity ($BAUD/$PARITY) and unit ids."
     fi
     if [ "$REBOOT" = 1 ] && [ "$DRY" != 1 ]; then
-        info "rebooting in 10 s ..."
-        ( sleep 10; reboot ) >/dev/null 2>&1 &
+        info "rebooting in about 10 s ..."
+        schedule_reboot
     elif [ -n "$IP" ]; then
         info "reboot to apply the new IP:  reboot"
     fi
