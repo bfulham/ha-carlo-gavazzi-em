@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.2
+
+- Fixed leaked Modbus client connections: a disconnected client is now closed before a new one is created, and pymodbus auto-reconnect is disabled. The leak opened concurrent connections that a single-connection gateway (Techbase iMod) answered by closing every new socket.
+
 ## 1.1.1
 
 - Fixed the discovery progress step raising `Show progress can only transition to show progress or show progress done` by finishing with `progress_done` before the summary form.

@@ -78,11 +78,16 @@ class ModbusGatewayClient:
         if self._client is not None and self._client.connected:
             return True
 
+        # Close any stale client first: pymodbus keeps reconnecting an
+        # abandoned client, which leaves extra connections open on the gateway.
+        await self.async_close()
+
         self._client = AsyncModbusTcpClient(
             host=str(self._config[CONF_HOST]),
             port=int(self._config.get(CONF_PORT, DEFAULT_PORT)),
             timeout=float(self._config.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)),
             retries=0,
+            reconnect_delay=0,
             framer=self._framer,
         )
         return bool(await self._client.connect())
