@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.3
+
+- A no-response read (silent meter, or a gateway exception pymodbus discards) no longer closes a healthy Modbus TCP connection, so scans and polls reuse one socket instead of reconnecting for every silent address. RTU-over-TCP framing still reconnects to resync.
+
 ## 1.1.2
 
 - Fixed leaked Modbus client connections: a disconnected client is now closed before a new one is created, and pymodbus auto-reconnect is disabled. The leak opened concurrent connections that a single-connection gateway (Techbase iMod) answered by closing every new socket.

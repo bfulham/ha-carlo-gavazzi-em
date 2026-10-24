@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from pymodbus.client import AsyncModbusTcpClient
+from pymodbus.exceptions import ModbusIOException
 from pymodbus.framer import FramerType
 
 from .const import (
@@ -138,6 +139,25 @@ class ModbusGatewayClient:
                     err,
                 )
                 await self.async_close()
+                continue
+            except ModbusIOException as err:
+                # No usable reply (meter silent, or the gateway answered with an
+                # exception pymodbus discards). Keep a healthy connection:
+                # reconnecting for every silent address churns gateway sockets.
+                # Modbus TCP frames carry a transaction ID so a late reply is
+                # discarded; RTU framing has none, so resync by reconnecting.
+                _LOGGER.debug(
+                    "No response from slave %s at 0x%04X: %s",
+                    slave_id,
+                    address,
+                    err,
+                )
+                if (
+                    self._client is None
+                    or not self._client.connected
+                    or self._transport_mode is TransportMode.RTU_OVER_TCP
+                ):
+                    await self.async_close()
                 continue
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug(
