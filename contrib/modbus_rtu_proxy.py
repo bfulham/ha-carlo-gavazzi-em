@@ -15,6 +15,10 @@ the Home Assistant integration can talk to the meters through a plain bridge.
 Usage:
     python modbus_rtu_proxy.py --serial /dev/ttySC0 --baud 9600 --port 502
     python modbus_rtu_proxy.py --serial /dev/ttySC0 --probe 1   # one test read
+    python modbus_rtu_proxy.py --serial /dev/ttySC0 --scan      # time every address
+
+--probe and --scan talk to the serial port directly, with no network involved,
+so stop the proxy (and any other program using the port) before running them.
 """
 
 from __future__ import print_function
@@ -201,6 +205,48 @@ def run_probe(bus, opts):
     return 0
 
 
+def run_scan(bus, opts):
+    """Read register 11 from every unit id straight off the serial bus, timing each."""
+    results = []
+    started = time.time()
+    for unit in range(opts.first, opts.last + 1):
+        begun = time.time()
+        reply = None
+        for _ in range(opts.retries + 1):
+            reply = bus.transact(unit, struct.pack(">BHH", 0x03, opts.addr, 1), opts.timeout)
+            if reply is not None:
+                break
+        took = time.time() - begun
+        if reply is None:
+            kind, detail = "silent", "no reply"
+        elif bytearray(reply)[0] & 0x80:
+            kind, detail = "exception", "exception 0x%02x" % bytearray(reply)[1]
+        else:
+            kind, detail = "meter", "id %d" % struct.unpack(">H", reply[2:4])[0]
+        results.append((unit, kind, took))
+        print("%3d  %-9s %-16s %6.0f ms" % (unit, kind, detail, took * 1000))
+        sys.stdout.flush()
+        time.sleep(opts.gap)
+
+    def of(kind):
+        return [r for r in results if r[1] == kind]
+
+    def avg(rows):
+        return sum(r[2] for r in rows) / len(rows) * 1000 if rows else 0.0
+
+    print("")
+    print("scanned %d addresses (%d-%d) in %.1f s" % (
+        len(results), opts.first, opts.last, time.time() - started))
+    print("  meters answering: %3d  (avg %.0f ms)  units %s" % (
+        len(of("meter")), avg(of("meter")), [r[0] for r in of("meter")]))
+    print("  exception replies:%3d  (avg %.0f ms)  units %s" % (
+        len(of("exception")), avg(of("exception")), [r[0] for r in of("exception")]))
+    print("  no reply:         %3d  (avg %.0f ms)" % (len(of("silent")), avg(of("silent"))))
+    slowest = sorted(results, key=lambda r: -r[2])[:5]
+    print("  slowest: " + ", ".join("%d (%.0f ms)" % (r[0], r[2] * 1000) for r in slowest))
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--serial", required=True, help="serial device, e.g. /dev/ttySC0")
@@ -214,13 +260,18 @@ def main():
     parser.add_argument("--gap", type=float, default=0.01, help="idle seconds between requests")
     parser.add_argument("--max-clients", type=int, default=16)
     parser.add_argument("--probe", type=int, metavar="UNIT", help="read one register and exit")
-    parser.add_argument("--addr", type=int, default=11, help="register for --probe")
+    parser.add_argument("--scan", action="store_true", help="time every unit id and exit")
+    parser.add_argument("--first", type=int, default=1, help="first unit id for --scan")
+    parser.add_argument("--last", type=int, default=247, help="last unit id for --scan")
+    parser.add_argument("--addr", type=int, default=11, help="register for --probe/--scan")
     parser.add_argument("-v", "--verbose", action="store_true")
     opts = parser.parse_args()
 
     bus = SerialBus(opts.serial, opts.baud, opts.parity, opts.stop_bits)
     if opts.probe is not None:
         sys.exit(run_probe(bus, opts))
+    if opts.scan:
+        sys.exit(run_scan(bus, opts))
 
     lock = threading.Lock()
     slots = threading.BoundedSemaphore(opts.max_clients)
