@@ -77,6 +77,17 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             entry.data.get(CONF_TCD_LAYOUT, {}),
         )
         hass.config_entries.async_update_entry(entry, version=4)
+    if entry.version < 5:
+        # 1.3.2: line current and voltage are off by default again.
+        from .layout_sync import sync_entities
+
+        sync_entities(
+            hass,
+            entry,
+            [MeterInfo(**meter) for meter in entry.data.get(CONF_METERS, [])],
+            entry.data.get(CONF_TCD_LAYOUT, {}),
+        )
+        hass.config_entries.async_update_entry(entry, version=5)
     return True
 
 

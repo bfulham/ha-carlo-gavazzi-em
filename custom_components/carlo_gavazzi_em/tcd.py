@@ -36,19 +36,10 @@ def channel_label(channel: str) -> str:
 
 BOARD = "board"
 
-# Sensors wanted for a line: one value each of W, A, V and kWh per phase. A 3-phase
-# load shows A and V for every phase and one W and kWh total.
-_SINGLE_PHASE_FIELDS = ("w_l{n}", "a_l{n}", "v_l{n}", "kwh_l{n}")
-_THREE_PHASE_FIELDS = (
-    "w_total",
-    "kwh_total",
-    "a_l1",
-    "a_l2",
-    "a_l3",
-    "v_l1",
-    "v_l2",
-    "v_l3",
-)
+# Sensors switched on for a line: power and energy only. Current and voltage exist
+# for every line but are off until enabled. A 3-phase load uses the totals.
+_SINGLE_PHASE_FIELDS = ("w_l{n}", "kwh_l{n}")
+_THREE_PHASE_FIELDS = ("w_total", "kwh_total")
 
 
 @dataclass(frozen=True, slots=True)

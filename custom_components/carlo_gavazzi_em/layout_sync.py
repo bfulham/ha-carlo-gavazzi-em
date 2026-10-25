@@ -62,7 +62,7 @@ def sync_entities(
             if existing is None or existing.config_entry_id != entry.entry_id:
                 continue
             if placement.meta:
-                _rename_if_generated(
+                entity_id = _rename_if_generated(
                     hass, registry, meter, existing, placement, layout, old_layout
                 )
             wanted = placement.description.entity_registry_enabled_default
@@ -87,13 +87,14 @@ def _rename_if_generated(
     placement: Any,
     layout: dict[str, Any],
     old_layout: dict[str, Any] | None,
-) -> None:
+) -> str:
+    """Rename the sensor if its ID was generated; return its (new) entity ID."""
     key = placement.description.key
     wanted = line_entity_id(
         board_name(layout.get(meter.unique_key)), meter, placement.meta
     )
     if existing.entity_id == wanted:
-        return
+        return existing.entity_id
 
     generated = set()
     if old_layout is not None:
@@ -118,3 +119,5 @@ def _rename_if_generated(
         registry.async_get(wanted) is None
     ):
         registry.async_update_entity(existing.entity_id, new_entity_id=wanted)
+        return wanted
+    return existing.entity_id

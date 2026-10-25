@@ -180,7 +180,7 @@ def _scan_range_schema(current: dict[str, Any]) -> vol.Schema:
 class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure one RTU-to-TCP gateway and discover its meters."""
 
-    VERSION = 4
+    VERSION = 5
 
     def __init__(self) -> None:
         """Initialize the flow state."""

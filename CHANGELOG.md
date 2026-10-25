@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.2
+
+- TCD line current (A) and voltage (V) sensors are off by default again; only W and kWh (totals for a 3-phase load) are on. The A and V sensors are still created and can be enabled from the entity settings. Config entry version 5 switches off the ones 1.3.0/1.3.1 enabled (a sensor is not polled once it is off). Meter-wide defaults on a meter with no TCD wired are unchanged.
+
 ## 1.3.1
 
 - Fixed 1.3.0 setting up no sensors: the sensor platform still passed the old arguments to the sensor class (`CarloGavazziSensor.__init__() takes 4 positional arguments but 5 were given`), so every entity showed unavailable. Nothing else changed.
