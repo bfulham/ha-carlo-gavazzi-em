@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.1
+
+- Fixed 1.3.0 setting up no sensors: the sensor platform still passed the old arguments to the sensor class (`CarloGavazziSensor.__init__() takes 4 positional arguments but 5 were given`), so every entity showed unavailable. Nothing else changed.
+
 ## 1.3.0
 
 - Each TCD line now has W, A, V and kWh sensors: a single-phase line gets all four for its phase; a 3-phase load gets A and V per phase plus one W and one kWh total. The voltage is the meter's own phase-to-neutral voltage (TCDs have no voltage register), shown per line without an extra read.

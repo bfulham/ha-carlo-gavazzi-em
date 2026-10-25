@@ -37,9 +37,7 @@ async def async_setup_entry(
     meters: list[MeterInfo] = runtime["meters"]
 
     async_add_entities(
-        CarloGavazziSensor(
-            coordinator, meter, placement.description, placement.device_id
-        )
+        CarloGavazziSensor(coordinator, meter, placement)
         for meter in meters
         for placement in coordinator.placements[meter.unique_key].values()
     )
