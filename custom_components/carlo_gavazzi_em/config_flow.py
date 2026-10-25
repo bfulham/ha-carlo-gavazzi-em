@@ -17,7 +17,6 @@ from homeassistant.config_entries import (
 )
 from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
     DeviceSelector,
     NumberSelector,
@@ -58,14 +57,15 @@ from .const import (
     MeterInfo,
     TransportMode,
 )
+from .layout_sync import sync_entities
 from .tcd import (
+    BOARD,
     LINES_PER_MODE,
     MODE_THREE_PHASE,
     MODE_UNUSED,
     TCD_CHANNELS,
     TCD_MODES,
     channel_label,
-    place_descriptions,
 )
 
 if TYPE_CHECKING:
@@ -180,7 +180,7 @@ def _scan_range_schema(current: dict[str, Any]) -> vol.Schema:
 class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
     """Configure one RTU-to-TCP gateway and discover its meters."""
 
-    VERSION = 3
+    VERSION = 4
 
     def __init__(self) -> None:
         """Initialize the flow state."""
@@ -200,6 +200,7 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         self._tcd_present: dict[str, dict[str, bool]] = {}
         self._layout: dict[str, dict[str, Any]] = {}
         self._tcd_queue: list[tuple[MeterInfo, str]] = []
+        self._boards_done: set[str] = set()
 
     async def async_step_user(
         self,
@@ -455,6 +456,7 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             self._layout = {}
             self._tcd_queue = []
+            self._boards_done = set()
             for label, (meter, channel) in fields.items():
                 mode = user_input.get(label, MODE_UNUSED)
                 self._layout.setdefault(meter.unique_key, {})[channel] = {
@@ -493,6 +495,55 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"found": str(len(self._meters))},
         )
 
+    def _stored_board(self, meter: MeterInfo) -> dict[str, Any]:
+        """Return the distribution board saved for this meter when reconfiguring."""
+        if self.source != SOURCE_RECONFIGURE:
+            return {}
+        stored = self._get_reconfigure_entry().data.get(CONF_TCD_LAYOUT, {})
+        return stored.get(meter.unique_key, {}).get(BOARD, {})
+
+    async def async_step_tcd_board(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Name the distribution board a meter belongs to (once per meter)."""
+        meter = self._tcd_queue[0][0]
+        if user_input is not None:
+            device = dr.async_get(self.hass).async_get(
+                user_input.get("board_device") or ""
+            )
+            name = (user_input.get("board_name") or "").strip()
+            if device is not None:
+                name = device.name_by_user or device.name or ""
+            self._layout[meter.unique_key][BOARD] = {
+                "name": name or None,
+                "device_id": device.id if device is not None else None,
+            }
+            self._boards_done.add(meter.unique_key)
+            return await self.async_step_tcd_names()
+
+        stored = self._stored_board(meter)
+        return self.async_show_form(
+            step_id="tcd_board",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        "board_name",
+                        description={
+                            "suggested_value": (
+                                None if stored.get("device_id") else stored.get("name")
+                            )
+                        },
+                    ): str,
+                    vol.Optional(
+                        "board_device",
+                        description={"suggested_value": stored.get("device_id")},
+                    ): DeviceSelector(),
+                }
+            ),
+            description_placeholders={"meter": meter.device_name},
+        )
+
     async def async_step_tcd_names(
         self,
         user_input: dict[str, Any] | None = None,
@@ -506,6 +557,8 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         if not self._tcd_queue:
             return self._async_finish_entry()
         meter, channel = self._tcd_queue[0]
+        if meter.unique_key not in self._boards_done:
+            return await self.async_step_tcd_board()
         mode = self._layout[meter.unique_key][channel]["mode"]
         line_count = LINES_PER_MODE[mode]
         suffixes = [""] if line_count == 1 else [f"_{n}" for n in range(1, 4)]
@@ -515,6 +568,9 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
                 # Keep what a previous setup stored for the TCDs not visited yet;
                 # without one they stay empty (sensors off) until filled in.
                 for skipped, skipped_channel in self._tcd_queue:
+                    stored_board = self._stored_board(skipped)
+                    if stored_board and BOARD not in self._layout[skipped.unique_key]:
+                        self._layout[skipped.unique_key][BOARD] = stored_board
                     entry = self._layout[skipped.unique_key][skipped_channel]
                     stored_skipped = self._stored_layout(skipped, skipped_channel)
                     if stored_skipped.get("mode") == entry["mode"]:
@@ -582,7 +638,9 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         title = f"{GATEWAY_TITLE_PREFIX} {data[CONF_HOST]}"
 
         if self.source == SOURCE_RECONFIGURE:
-            self._sync_tcd_entities()
+            sync_entities(
+                self.hass, self._get_reconfigure_entry(), self._meters, self._layout
+            )
             return self.async_update_reload_and_abort(
                 self._get_reconfigure_entry(),
                 data=data,
@@ -591,44 +649,6 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
                 unique_id=self.unique_id,
             )
         return self.async_create_entry(title=title, data=data)
-
-    def _sync_tcd_entities(self) -> None:
-        """Apply the new layout to TCD sensors that already exist.
-
-        A registry entry keeps its enabled state across a reload, so the new
-        defaults would otherwise only reach brand-new entities. Sensors the user
-        switched off themselves stay off.
-        """
-        from .registers import SENSOR_DESCRIPTIONS
-
-        registry = er.async_get(self.hass)
-        entry = self._get_reconfigure_entry()
-        for meter in self._meters:
-            if meter.model_family == "em24":
-                continue
-            placements = place_descriptions(
-                SENSOR_DESCRIPTIONS, self._layout.get(meter.unique_key)
-            )
-            for key, placement in placements.items():
-                if not key.startswith("tcd"):
-                    continue
-                entity_id = registry.async_get_entity_id(
-                    "sensor", DOMAIN, f"{meter.unique_key}_{key}"
-                )
-                existing = registry.async_get(entity_id) if entity_id else None
-                if existing is None or existing.config_entry_id != entry.entry_id:
-                    continue
-                wanted = placement.description.entity_registry_enabled_default
-                if (
-                    wanted
-                    and existing.disabled_by is er.RegistryEntryDisabler.INTEGRATION
-                ):
-                    registry.async_update_entity(entity_id, disabled_by=None)
-                elif not wanted and not existing.disabled:
-                    registry.async_update_entity(
-                        entity_id,
-                        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
-                    )
 
     def _reset_discovery(self) -> None:
         """Clear discovery state so the user can retry within the same flow."""
@@ -716,12 +736,26 @@ class CarloGavazziOptionsFlow(OptionsFlowWithReload):
                     vol.Optional(CONF_ADVANCED_SETTINGS, default=False): bool,
                 }
             )
-            return self.async_show_form(step_id="init", data_schema=schema)
+            return self.async_show_form(
+                step_id="init",
+                data_schema=schema,
+                description_placeholders=self._poll_placeholders(),
+            )
 
         self._input.update(user_input)
         if user_input[CONF_ADVANCED_SETTINGS]:
             return await self.async_step_advanced()
         return self._save_options(current)
+
+    def _poll_placeholders(self) -> dict[str, str]:
+        """Fill in how heavy polling is and the fastest interval that keeps up."""
+        runtime = self.hass.data.get(DOMAIN, {}).get(self.config_entry.entry_id)
+        if runtime is None:
+            return {"entities": "?", "reads": "?", "seconds": "?", "recommended": "?"}
+        return {
+            name: str(value)
+            for name, value in runtime["coordinator"].poll_estimate().items()
+        }
 
     async def async_step_advanced(
         self,

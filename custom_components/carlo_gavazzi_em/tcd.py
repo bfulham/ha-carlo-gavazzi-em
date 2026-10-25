@@ -27,20 +27,28 @@ LINES_PER_MODE = {MODE_THREE_PHASE: 1, MODE_SINGLE_PHASE: 3}
 _KEY = re.compile(r"tcd(a[12])_(.+)")
 _PHASE = re.compile(r"_l([123])$")
 _NAME_TAIL = re.compile(r" (Total|L[123])$")
-_METRIC_NAMES = {
-    "W": "Power",
-    "kWh": "Energy",
-    "A": "Current",
-    "VA": "Apparent power",
-    "VAR": "Reactive power",
-    "kvarh": "Reactive energy",
-    "PF": "Power factor",
-}
 
 
 def channel_label(channel: str) -> str:
     """Return the label printed on the meter, e.g. TCDA1."""
     return f"TCD{channel.upper()}"
+
+
+BOARD = "board"
+
+# Sensors wanted for a line: one value each of W, A, V and kWh per phase. A 3-phase
+# load shows A and V for every phase and one W and kWh total.
+_SINGLE_PHASE_FIELDS = ("w_l{n}", "a_l{n}", "v_l{n}", "kwh_l{n}")
+_THREE_PHASE_FIELDS = (
+    "w_total",
+    "kwh_total",
+    "a_l1",
+    "a_l2",
+    "a_l3",
+    "v_l1",
+    "v_l2",
+    "v_l3",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,12 +57,19 @@ class Placement:
 
     description: RegisterSensorDescription
     device_id: str | None = None
+    # Set for sensors that belong to a TCD line: line_name, short_name, tcd, phase,
+    # board and object_id (the part of the entity id after the board and short name).
+    meta: dict[str, str | None] | None = None
+
+
+def board_name(meter_layout: dict[str, Any] | None) -> str | None:
+    """Return the distribution board name stored for a meter, if any."""
+    return ((meter_layout or {}).get(BOARD) or {}).get("name")
 
 
 def _metric(description_name: str, channel: str) -> str:
     base = description_name.removeprefix(f"{channel_label(channel)} ")
-    base = _NAME_TAIL.sub("", base)
-    return _METRIC_NAMES.get(base, base)
+    return _NAME_TAIL.sub("", base)
 
 
 def place_descriptions(
@@ -63,22 +78,37 @@ def place_descriptions(
 ) -> dict[str, Placement]:
     """Return every sensor of one meter by key, adjusted for its TCD layout.
 
-    layout maps a channel ("a1", "a2") to {"mode": ..., "lines": [{"name": str | None,
-    "short_name": str | None, "device_id": str | None}, ...]}. A channel that is
-    missing from the layout (or a meter with no layout at all) keeps the stock names
-    and defaults.
+    layout is {"board": {...}, "a1": {...}, "a2": {...}}; a channel maps to
+    {"mode": ..., "lines": [{"name": str | None, "short_name": str | None,
+    "device_id": str | None}, ...]}. A meter with no layout keeps the stock names
+    and defaults. Once at least one of its TCDs is wired, the meter-wide totals are
+    switched off by default: they only add unrelated lines together.
     """
     layout = layout or {}
+    wired = any(
+        (layout.get(channel) or {}).get("mode", MODE_UNUSED) != MODE_UNUSED
+        for channel in TCD_CHANNELS
+    )
     placed: dict[str, Placement] = {}
     for description in descriptions:
         match = _KEY.fullmatch(description.key)
         config = layout.get(match.group(1)) if match else None
-        if match is None or not config:
+        if match is None:
+            if wired:
+                description = replace(
+                    description, entity_registry_enabled_default=False
+                )
             placed[description.key] = Placement(description)
-            continue
-        placed[description.key] = _place_tcd_sensor(
-            description, match.group(1), match.group(2), config
-        )
+        elif not config:
+            placed[description.key] = Placement(description)
+        else:
+            placed[description.key] = _place_tcd_sensor(
+                description,
+                match.group(1),
+                match.group(2),
+                config,
+                board_name(layout),
+            )
     return placed
 
 
@@ -87,37 +117,46 @@ def _place_tcd_sensor(
     channel: str,
     field: str,
     config: dict[str, Any],
+    board: str | None,
 ) -> Placement:
     mode = config.get("mode", MODE_UNUSED)
     lines = config.get("lines") or []
     phase = _PHASE.search(field)
+    off = Placement(replace(description, entity_registry_enabled_default=False))
 
-    if mode == MODE_THREE_PHASE and lines and lines[0].get("name"):
+    if mode == MODE_THREE_PHASE and lines:
         line = lines[0]
-        enabled = field in ("w_total", "kwh_total")
-        suffix = f" L{phase.group(1)}" if phase else ""
+        wanted = field in _THREE_PHASE_FIELDS
     elif mode == MODE_SINGLE_PHASE and phase and int(phase.group(1)) <= len(lines):
         line = lines[int(phase.group(1)) - 1]
-        enabled = field in (f"w_l{phase.group(1)}", f"kwh_l{phase.group(1)}")
-        suffix = ""
-        if not line.get("name"):
-            return Placement(
-                replace(description, entity_registry_enabled_default=False)
-            )
+        wanted = field in [f.format(n=phase.group(1)) for f in _SINGLE_PHASE_FIELDS]
     else:
         # An unused channel, or a total/demand value spanning three separate lines:
         # keep the stock name on the meter's own device, off by default.
-        return Placement(replace(description, entity_registry_enabled_default=False))
+        return off
 
-    metric = _metric(description.name, channel) + suffix
-    # A short name (R1, W1, ...) leads the entity name. Without one, a linked device
-    # already supplies the prefix (has_entity_name) and a bare name has to carry it.
-    short = line.get("short_name")
-    if short:
-        name = f"{short} {metric}"
-    else:
-        name = metric if line.get("device_id") else f"{line['name']} {metric}"
+    long_name, short_name = line.get("name"), line.get("short_name")
+    label = long_name or short_name
+    if not label:
+        return off
+
+    metric = _metric(description.name, channel)
+    tag = f" L{phase.group(1)}" if phase and mode == MODE_THREE_PHASE else ""
+    # "<long name> A"; the short name only labels a line that has no long name.
+    # A linked device supplies the long name itself (has_entity_name).
+    name = f"{metric}{tag}" if line.get("device_id") else f"{label} {metric}{tag}"
     return Placement(
-        replace(description, name=name, entity_registry_enabled_default=enabled),
+        replace(description, name=name, entity_registry_enabled_default=wanted),
         line.get("device_id"),
+        {
+            "line_name": long_name,
+            "short_name": short_name,
+            "tcd": channel_label(channel),
+            "phase": f"L{phase.group(1)}" if phase else None,
+            "board": board,
+            "object_id": (
+                f"{short_name or long_name}_{metric}"
+                + (f"_l{phase.group(1)}" if tag else "")
+            ),
+        },
     )

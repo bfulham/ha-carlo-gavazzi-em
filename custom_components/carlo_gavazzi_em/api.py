@@ -69,7 +69,11 @@ def _build_read_blocks(
     max_words: int,
 ) -> tuple[ReadBlock, ...]:
     """Group adjacent variables without exceeding the protocol's word limit."""
-    descriptions = sorted(descriptions, key=lambda item: item.address)
+    # Aliases (source_key) show a register another sensor already reads.
+    descriptions = sorted(
+        (item for item in descriptions if item.source_key is None),
+        key=lambda item: item.address,
+    )
     blocks: list[ReadBlock] = []
     current: list[RegisterSensorDescription] = []
     block_start = 0

@@ -38,7 +38,7 @@
       },
       "tcd_names": {
         "title": "Name the {tcd} line(s) on {meter}",
-        "description": "{tcd} on {meter} measures a {mode}. Give each line a name, or pick an existing device to link its sensors to (the device's name is then used). The short name (R1, W1, ...) leads the sensor names. For single-phase lines, leave a line completely empty if it is not connected. Leave everything empty, or tick Skip the rest, to set a TCD up later: its sensors stay off, and Reconfigure pre-fills what you entered.",
+        "description": "{tcd} on {meter} measures a {mode}. Each line gets W, A, V and kWh sensors (a 3-phase load gets A and V per phase and one W and kWh total). Enter a long name, or pick an existing device to link its sensors to (its name is then used). The short name (R1, W1, ...) is used in entity IDs, and also as the label when a line has no long name. Leave a single-phase line completely empty if it is not connected. Leave everything empty, or tick Skip the rest, to set a TCD up later; Reconfigure pre-fills what you entered.",
         "data": {
           "name": "Name",
           "short_name": "Short name (e.g. R1)",
@@ -53,6 +53,14 @@
           "short_name_3": "Line 3 short name (e.g. R1)",
           "device_3": "Line 3 - or link to device",
           "skip_rest": "Skip the rest (set up later)"
+        }
+      },
+      "tcd_board": {
+        "title": "Distribution board for {meter}",
+        "description": "Which distribution board is {meter} on (for example DB1)? Pick an existing device or type a name. The meter's device takes this name and it starts every sensor's entity ID, e.g. sensor.db1_r1_w. Leave both empty to keep the default name.",
+        "data": {
+          "board_name": "Distribution board name",
+          "board_device": "Or take the name from a device"
         }
       }
     },
@@ -74,7 +82,7 @@
     "step": {
       "init": {
         "title": "Polling options",
-        "description": "Use Reconfigure on the integration entry to change the gateway address, framing mode, scan range, or rescan for meters.",
+        "description": "{entities} sensors are enabled, which takes {reads} Modbus reads per poll (about {seconds} s on the bus). Recommended update interval for the highest resolution that keeps up: {recommended} s. Going lower makes polls overlap and slows everything down; enabling more sensors raises this. Use Reconfigure on the integration entry to change the gateway address, framing mode, scan range, wiring or names, or to rescan for meters.",
         "data": {
           "update_interval": "Update interval",
           "advanced_settings": "Show advanced polling settings"

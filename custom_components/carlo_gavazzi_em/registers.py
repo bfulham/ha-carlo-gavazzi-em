@@ -54,6 +54,8 @@ class RegisterSensorDescription(SensorEntityDescription):
     words: int = 2
     entity_category: EntityCategory | None = None
     maximum: float | None = None
+    # A sensor that shows another register's value (read once, shown twice).
+    source_key: str | None = None
 
 
 IDENTIFICATION_CODES: dict[int, str] = {
@@ -1663,7 +1665,29 @@ def _enabled_by_default(
     )
 
 
-SENSOR_DESCRIPTIONS = _enabled_by_default(SENSOR_DESCRIPTIONS)
+def _tcd_voltage_aliases(
+    descriptions: tuple[RegisterSensorDescription, ...],
+) -> tuple[RegisterSensorDescription, ...]:
+    """TCD channels have no voltage register; offer the phase voltage per TCD.
+
+    A TCD line is on one phase of the same supply the meter measures, so its
+    voltage is the meter's own phase-to-neutral voltage. These aliases read that
+    register (they add no read of their own) so a line can show W, A, V and kWh.
+    """
+    by_key = {item.key: item for item in descriptions}
+    return descriptions + tuple(
+        replace(
+            by_key[f"v_l{phase}_n"],
+            key=f"tcd{channel}_v_l{phase}",
+            name=f"TCD{channel.upper()} V L{phase}",
+            source_key=f"v_l{phase}_n",
+        )
+        for channel in ("a1", "a2")
+        for phase in (1, 2, 3)
+    )
+
+
+SENSOR_DESCRIPTIONS = _enabled_by_default(_tcd_voltage_aliases(SENSOR_DESCRIPTIONS))
 SENSOR_DESCRIPTIONS_EM24 = _enabled_by_default(SENSOR_DESCRIPTIONS_EM24)
 
 

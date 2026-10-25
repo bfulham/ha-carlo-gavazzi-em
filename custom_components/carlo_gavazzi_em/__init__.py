@@ -12,6 +12,7 @@ from homeassistant.helpers import entity_registry as er
 from .const import (
     CONF_DETECTED_TRANSPORT_MODE,
     CONF_METERS,
+    CONF_TCD_LAYOUT,
     DOMAIN,
     PLATFORMS,
     MeterInfo,
@@ -64,6 +65,18 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     disabled_by=er.RegistryEntryDisabler.INTEGRATION,
                 )
         hass.config_entries.async_update_entry(entry, version=3)
+    if entry.version < 4:
+        # 1.3: a TCD line now shows W, A, V and kWh, and the meter-wide totals are
+        # off once a TCD is wired. Apply that to the sensors that already exist.
+        from .layout_sync import sync_entities
+
+        sync_entities(
+            hass,
+            entry,
+            [MeterInfo(**meter) for meter in entry.data.get(CONF_METERS, [])],
+            entry.data.get(CONF_TCD_LAYOUT, {}),
+        )
+        hass.config_entries.async_update_entry(entry, version=4)
     return True
 
 

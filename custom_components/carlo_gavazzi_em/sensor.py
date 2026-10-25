@@ -11,6 +11,7 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.util import slugify
 
 from .const import DOMAIN, MeterInfo
 from .coordinator import CarloGavazziCoordinator
@@ -22,6 +23,7 @@ from .modbus import (
     is_missing_32,
 )
 from .registers import RegisterSensorDescription, map_option
+from .tcd import Placement
 
 
 async def async_setup_entry(
@@ -52,18 +54,26 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
         self,
         coordinator: CarloGavazziCoordinator,
         meter: MeterInfo,
-        description: RegisterSensorDescription,
-        linked_device_id: str | None = None,
+        placement: Placement,
     ) -> None:
         super().__init__(coordinator)
+        description = placement.description
         self.entity_description = description
+        self._meta = placement.meta
+        if placement.meta:
+            # sensor.<board>_<short name or name>_<w|a|v|kwh>[_l1], used when the
+            # entity is first added; later renames in the UI are left alone.
+            board = coordinator.boards.get(meter.unique_key) or meter.device_name
+            self.entity_id = "sensor." + slugify(
+                f"{board}_{placement.meta['object_id']}"
+            )
         self._meter = meter
         self._attr_unique_id = f"{meter.unique_key}_{description.key}"
         self._attr_device_info = self._linked_device_info(
-            coordinator, linked_device_id
+            coordinator, placement.device_id
         ) or DeviceInfo(
             identifiers={(DOMAIN, meter.unique_key)},
-            name=meter.device_name,
+            name=coordinator.boards.get(meter.unique_key) or meter.device_name,
             manufacturer="Carlo Gavazzi",
             model=meter.model_name,
             model_id=str(meter.identification_code),
@@ -89,6 +99,19 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
         return None
 
     @property
+    def extra_state_attributes(self) -> dict[str, Any] | None:
+        """Record the names, TCD and board a line sensor was set up with."""
+        if not self._meta:
+            return None
+        return {
+            "line_name": self._meta["line_name"],
+            "short_name": self._meta["short_name"],
+            "tcd": self._meta["tcd"],
+            "phase": self._meta["phase"],
+            "distribution_board": self._meta["board"],
+        }
+
+    @property
     def available(self) -> bool:
         """Return true only when this variable returned a valid value."""
         return super().available and self._decoded_value is not None
@@ -103,7 +126,10 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
         if not self.coordinator.data:
             return None
         meter_data = self.coordinator.data.get(self._meter.unique_key, {})
-        registers = meter_data.get("values", {}).get(self.entity_description.key)
+        description = self.entity_description
+        registers = meter_data.get("values", {}).get(
+            description.source_key or description.key
+        )
         if registers is None:
             return None
         return decode_sensor_value(

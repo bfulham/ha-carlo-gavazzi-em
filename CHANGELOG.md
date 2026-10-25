@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.3.0
+
+- Each TCD line now has W, A, V and kWh sensors: a single-phase line gets all four for its phase; a 3-phase load gets A and V per phase plus one W and one kWh total. The voltage is the meter's own phase-to-neutral voltage (TCDs have no voltage register), shown per line without an extra read.
+- Names are "<long name> W", "<long name> A", "<long name> V", "<long name> kWh" (A and V get " L1".." L3" on a 3-phase load). The short name is used as the label only when a line has no long name. Both are recorded as attributes (`line_name`, `short_name`, `tcd`, `phase`, `distribution_board`).
+- New per-meter step for the distribution board (an existing device's name, or typed). The meter's device takes that name and entity IDs are `sensor.<board>_<short name>_<w|a|v|kwh>` (`_l1`.. on a 3-phase load); without a short name the long name is used. IDs are only chosen when a sensor is first created.
+- Once a meter has a wired TCD, its meter-wide sensors (V, A, W, kWh totals) are off by default. A meter with no TCD wired keeps them.
+- Config entry version 4: existing installs get the new on/off state applied automatically (sensors you disabled yourself stay off).
+- The polling options page shows how many sensors are enabled, how many Modbus reads a poll takes, and the shortest update interval that keeps up (from the last real poll, or a model of the bus before one has run).
+
 ## 1.2.0
 
 - TCD naming page: each line now also has a short name (R1, W1, ...) that leads its sensor names ("R1 Power", "R1 Energy"), alongside the name or linked device.
