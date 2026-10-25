@@ -38,16 +38,21 @@
       },
       "tcd_names": {
         "title": "Name the {tcd} line(s) on {meter}",
-        "description": "{tcd} on {meter} measures a {mode}. Type a name, or pick an existing device to link the sensors to it; a picked device overrides the typed name and supplies the sensor names. For single-phase lines, leave a line empty if it is not used and its sensors will stay off.",
+        "description": "{tcd} on {meter} measures a {mode}. Give each line a name, or pick an existing device to link its sensors to (the device's name is then used). The short name (R1, W1, ...) leads the sensor names. For single-phase lines, leave a line completely empty if it is not connected. Leave everything empty, or tick Skip the rest, to set a TCD up later: its sensors stay off, and Reconfigure pre-fills what you entered.",
         "data": {
           "name": "Name",
+          "short_name": "Short name (e.g. R1)",
           "device": "Or link to device",
           "name_1": "Line 1 name",
+          "short_name_1": "Line 1 short name (e.g. R1)",
           "device_1": "Line 1 - or link to device",
           "name_2": "Line 2 name",
+          "short_name_2": "Line 2 short name (e.g. R1)",
           "device_2": "Line 2 - or link to device",
           "name_3": "Line 3 name",
-          "device_3": "Line 3 - or link to device"
+          "short_name_3": "Line 3 short name (e.g. R1)",
+          "device_3": "Line 3 - or link to device",
+          "skip_rest": "Skip the rest (set up later)"
         }
       }
     },
@@ -62,8 +67,7 @@
     "error": {
       "invalid_range": "The first slave address must be less than or equal to the last slave address.",
       "cannot_connect": "Could not communicate with the gateway. Check its address, port, framing mode, and timeout, then try again.",
-      "no_devices_found": "The gateway responded, but no compatible EM270, EM280, or EM24 meters were found. Check the RS485 settings, wiring, and slave-address range.",
-      "name_required": "Enter a name or pick a device (for single-phase lines, at least one line)."
+      "no_devices_found": "The gateway responded, but no compatible EM270, EM280, or EM24 meters were found. Check the RS485 settings, wiring, and slave-address range."
     }
   },
   "options": {

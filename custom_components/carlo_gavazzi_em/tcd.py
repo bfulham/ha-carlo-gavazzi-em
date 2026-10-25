@@ -64,8 +64,9 @@ def place_descriptions(
     """Return every sensor of one meter by key, adjusted for its TCD layout.
 
     layout maps a channel ("a1", "a2") to {"mode": ..., "lines": [{"name": str | None,
-    "device_id": str | None}, ...]}. A channel that is missing from the layout (or a
-    meter with no layout at all) keeps the stock names and defaults.
+    "short_name": str | None, "device_id": str | None}, ...]}. A channel that is
+    missing from the layout (or a meter with no layout at all) keeps the stock names
+    and defaults.
     """
     layout = layout or {}
     placed: dict[str, Placement] = {}
@@ -109,9 +110,13 @@ def _place_tcd_sensor(
         return Placement(replace(description, entity_registry_enabled_default=False))
 
     metric = _metric(description.name, channel) + suffix
-    # A linked device already supplies the prefix (has_entity_name), a bare name
-    # has to carry it.
-    name = metric if line.get("device_id") else f"{line['name']} {metric}"
+    # A short name (R1, W1, ...) leads the entity name. Without one, a linked device
+    # already supplies the prefix (has_entity_name) and a bare name has to carry it.
+    short = line.get("short_name")
+    if short:
+        name = f"{short} {metric}"
+    else:
+        name = metric if line.get("device_id") else f"{line['name']} {metric}"
     return Placement(
         replace(description, name=name, entity_registry_enabled_default=enabled),
         line.get("device_id"),

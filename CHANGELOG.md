@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0
+
+- TCD naming page: each line now also has a short name (R1, W1, ...) that leads its sensor names ("R1 Power", "R1 Energy"), alongside the name or linked device.
+- A single-phase line left completely empty is not connected: its sensors stay off and are not polled.
+- A TCD can be skipped for now by leaving its naming page empty, and *Skip the rest* skips every TCD still waiting (for a gateway serving several boards you have not reached yet). Skipped TCDs have their sensors off.
+- Reconfigure pre-fills the wiring mode, names, short names and linked devices from the previous setup, and keeps the stored answers for TCDs you skip.
+
 ## 1.1.4
 
 - Two new setup steps after discovery (also on Reconfigure) for EM270/EM280 meters. First, for each TCD (TCDA1, TCDA2) choose *Not connected*, *One 3-phase load* or *Three single-phase lines*; EM280 meters that report "No TCD detected" are pre-set to Not connected. Second, name each line, or pick an existing Home Assistant device: the sensors are then attached to that device and named from it (a picked device overrides a typed name).

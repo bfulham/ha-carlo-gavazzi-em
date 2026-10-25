@@ -75,6 +75,7 @@ _LOGGER = logging.getLogger(__name__)
 
 CONF_ADVANCED_SETTINGS = "advanced_settings"
 CONF_LIMIT_SCAN_RANGE = "limit_scan_range"
+CONF_SKIP_REST = "skip_rest"
 
 
 def _number(
@@ -496,70 +497,73 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Name each line of the next TCD, or link it to an existing device."""
+        """Name each line of the next TCD, or link it to an existing device.
+
+        Leaving every field empty skips that TCD for now: its sensors stay off and
+        a later Reconfigure pre-fills the form again. "Skip the rest" does the
+        same for every TCD still waiting.
+        """
         if not self._tcd_queue:
             return self._async_finish_entry()
         meter, channel = self._tcd_queue[0]
         mode = self._layout[meter.unique_key][channel]["mode"]
         line_count = LINES_PER_MODE[mode]
-        names = ["name"] if line_count == 1 else [f"name_{n}" for n in range(1, 4)]
-        devices = (
-            ["device"] if line_count == 1 else [f"device_{n}" for n in range(1, 4)]
-        )
-        errors: dict[str, str] = {}
+        suffixes = [""] if line_count == 1 else [f"_{n}" for n in range(1, 4)]
 
         if user_input is not None:
+            if user_input.get(CONF_SKIP_REST):
+                # Keep what a previous setup stored for the TCDs not visited yet;
+                # without one they stay empty (sensors off) until filled in.
+                for skipped, skipped_channel in self._tcd_queue:
+                    entry = self._layout[skipped.unique_key][skipped_channel]
+                    stored_skipped = self._stored_layout(skipped, skipped_channel)
+                    if stored_skipped.get("mode") == entry["mode"]:
+                        entry["lines"] = stored_skipped.get("lines", [])
+                self._tcd_queue.clear()
+                return self._async_finish_entry()
             device_registry = dr.async_get(self.hass)
             lines = []
-            for name_key, device_key in zip(names, devices, strict=True):
-                device = device_registry.async_get(user_input.get(device_key) or "")
-                name = (user_input.get(name_key) or "").strip()
+            for suffix in suffixes:
+                device = device_registry.async_get(
+                    user_input.get(f"device{suffix}") or ""
+                )
+                name = (user_input.get(f"name{suffix}") or "").strip()
                 if device is not None:
                     # A linked device names the line, whatever was typed.
                     name = device.name_by_user or device.name or ""
                 lines.append(
                     {
                         "name": name or None,
+                        "short_name": (
+                            user_input.get(f"short_name{suffix}") or ""
+                        ).strip()
+                        or None,
                         "device_id": device.id if device is not None else None,
                     }
                 )
-            if not any(line["name"] for line in lines):
-                errors["base"] = "name_required"
-            else:
-                self._layout[meter.unique_key][channel]["lines"] = lines
-                self._tcd_queue.pop(0)
-                return await self.async_step_tcd_names()
+            self._layout[meter.unique_key][channel]["lines"] = lines
+            self._tcd_queue.pop(0)
+            return await self.async_step_tcd_names()
 
         stored = self._stored_layout(meter, channel)
         stored_lines = stored.get("lines", []) if stored.get("mode") == mode else []
         fields: dict[Any, Any] = {}
-        for index, (name_key, device_key) in enumerate(
-            zip(names, devices, strict=True)
-        ):
+        for index, suffix in enumerate(suffixes):
             line = stored_lines[index] if index < len(stored_lines) else {}
-            suggested = user_input or {}
-            fields[
-                vol.Optional(
-                    name_key,
-                    description={
-                        "suggested_value": suggested.get(name_key, line.get("name"))
-                    },
+            # A linked line stores the device's name, so only suggest typed names.
+            typed_name = None if line.get("device_id") else line.get("name")
+            for key, value, selector in (
+                (f"name{suffix}", typed_name, str),
+                (f"short_name{suffix}", line.get("short_name"), str),
+                (f"device{suffix}", line.get("device_id"), DeviceSelector()),
+            ):
+                fields[vol.Optional(key, description={"suggested_value": value})] = (
+                    selector
                 )
-            ] = str
-            fields[
-                vol.Optional(
-                    device_key,
-                    description={
-                        "suggested_value": suggested.get(
-                            device_key, line.get("device_id")
-                        )
-                    },
-                )
-            ] = DeviceSelector()
+        fields[vol.Optional(CONF_SKIP_REST, default=False)] = bool
         return self.async_show_form(
             step_id="tcd_names",
             data_schema=vol.Schema(fields),
-            errors=errors,
             description_placeholders={
                 "meter": meter.device_name,
                 "tcd": channel_label(channel),
