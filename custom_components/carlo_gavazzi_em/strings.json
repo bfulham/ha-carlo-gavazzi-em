@@ -31,9 +31,24 @@
           "scan_end": "Last slave address"
         }
       },
-      "finish": {
-        "title": "Discovery complete",
-        "description": "Scan finished: pass {pass}, address {address}, using {transport}. Compatible meters found: {found}. Review the settings and submit to finish setup."
+      "tcd_layout": {
+        "title": "How are the TCDs wired?",
+        "description": "Found {found} meter(s). For each TCD, choose whether it measures one 3-phase load or three separate single-phase lines. Choose Not connected for a TCD that is not fitted; its sensors are then switched off and not polled.",
+        "data": {}
+      },
+      "tcd_names": {
+        "title": "Name the {tcd} line(s) on {meter}",
+        "description": "{tcd} on {meter} measures a {mode}. Type a name, or pick an existing device to link the sensors to it; a picked device overrides the typed name and supplies the sensor names. For single-phase lines, leave a line empty if it is not used and its sensors will stay off.",
+        "data": {
+          "name": "Name",
+          "device": "Or link to device",
+          "name_1": "Line 1 name",
+          "device_1": "Line 1 - or link to device",
+          "name_2": "Line 2 name",
+          "device_2": "Line 2 - or link to device",
+          "name_3": "Line 3 name",
+          "device_3": "Line 3 - or link to device"
+        }
       }
     },
     "progress": {
@@ -47,7 +62,8 @@
     "error": {
       "invalid_range": "The first slave address must be less than or equal to the last slave address.",
       "cannot_connect": "Could not communicate with the gateway. Check its address, port, framing mode, and timeout, then try again.",
-      "no_devices_found": "The gateway responded, but no compatible EM270, EM280, or EM24 meters were found. Check the RS485 settings, wiring, and slave-address range."
+      "no_devices_found": "The gateway responded, but no compatible EM270, EM280, or EM24 meters were found. Check the RS485 settings, wiring, and slave-address range.",
+      "name_required": "Enter a name or pick a device (for single-phase lines, at least one line)."
     }
   },
   "options": {
@@ -76,6 +92,13 @@
         "auto": "Auto detect",
         "socket": "Modbus TCP",
         "rtu_over_tcp": "RTU over TCP"
+      }
+    },
+    "tcd_mode": {
+      "options": {
+        "unused": "Not connected",
+        "three_phase": "One 3-phase load",
+        "single_phase": "Three single-phase lines"
       }
     }
   }

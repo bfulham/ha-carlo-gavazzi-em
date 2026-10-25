@@ -13,6 +13,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .api import CarloGavazziAPI
 from .const import (
+    CONF_TCD_LAYOUT,
     CONF_UPDATE_INTERVAL,
     DEFAULT_UPDATE_INTERVAL,
     DOMAIN,
@@ -20,6 +21,7 @@ from .const import (
 )
 from .modbus import ModbusGatewayError
 from .registers import SENSOR_DESCRIPTIONS, SENSOR_DESCRIPTIONS_EM24
+from .tcd import Placement, place_descriptions
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -36,6 +38,17 @@ class CarloGavazziCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
     ) -> None:
         self.api = api
         self.meters = meters
+        layout = entry.data.get(CONF_TCD_LAYOUT, {})
+        # Sensors per meter, named and defaulted according to how its TCDs are wired.
+        self.placements: dict[str, dict[str, Placement]] = {
+            meter.unique_key: place_descriptions(
+                SENSOR_DESCRIPTIONS_EM24
+                if meter.model_family == "em24"
+                else SENSOR_DESCRIPTIONS,
+                layout.get(meter.unique_key),
+            )
+            for meter in meters
+        }
         update_interval = entry.options.get(
             CONF_UPDATE_INTERVAL,
             entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
@@ -58,22 +71,17 @@ class CarloGavazziCoordinator(DataUpdateCoordinator[dict[str, dict[str, Any]]]):
         registry = er.async_get(self.hass)
         enabled: dict[str, frozenset[str]] = {}
         for meter in self.meters:
-            descriptions = (
-                SENSOR_DESCRIPTIONS_EM24
-                if meter.model_family == "em24"
-                else SENSOR_DESCRIPTIONS
-            )
             keys = set()
-            for description in descriptions:
+            for key, placement in self.placements[meter.unique_key].items():
                 entity_id = registry.async_get_entity_id(
-                    "sensor", DOMAIN, f"{meter.unique_key}_{description.key}"
+                    "sensor", DOMAIN, f"{meter.unique_key}_{key}"
                 )
                 entry = registry.async_get(entity_id) if entity_id else None
                 if entry is None:
-                    if description.entity_registry_enabled_default:
-                        keys.add(description.key)
+                    if placement.description.entity_registry_enabled_default:
+                        keys.add(key)
                 elif not entry.disabled:
-                    keys.add(description.key)
+                    keys.add(key)
             enabled[meter.unique_key] = frozenset(keys)
         return enabled
 

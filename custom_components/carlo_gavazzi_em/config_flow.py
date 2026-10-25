@@ -16,7 +16,10 @@ from homeassistant.config_entries import (
     OptionsFlowWithReload,
 )
 from homeassistant.core import callback
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
+    DeviceSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -35,9 +38,12 @@ from .const import (
     CONF_REQUEST_RETRIES,
     CONF_SCAN_END,
     CONF_SCAN_START,
+    CONF_TCD_LAYOUT,
     CONF_TIMEOUT,
     CONF_TRANSPORT_MODE,
     CONF_UPDATE_INTERVAL,
+    CT_PRIMARY_2_ADDRESS,
+    CT_PRIMARY_ADDRESS,
     DEFAULT_DELAY_BETWEEN_REQUESTS_MS,
     DEFAULT_DISCOVERY_PASSES,
     DEFAULT_PORT,
@@ -51,6 +57,15 @@ from .const import (
     MIN_UPDATE_INTERVAL,
     MeterInfo,
     TransportMode,
+)
+from .tcd import (
+    LINES_PER_MODE,
+    MODE_THREE_PHASE,
+    MODE_UNUSED,
+    TCD_CHANNELS,
+    TCD_MODES,
+    channel_label,
+    place_descriptions,
 )
 
 if TYPE_CHECKING:
@@ -179,6 +194,11 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
             "found": "0",
         }
         self._last_notified_found = -1
+        self._meters: list[MeterInfo] = []
+        self._detected_transport = TransportMode.AUTO.value
+        self._tcd_present: dict[str, dict[str, bool]] = {}
+        self._layout: dict[str, dict[str, Any]] = {}
+        self._tcd_queue: list[tuple[MeterInfo, str]] = []
 
     async def async_step_user(
         self,
@@ -345,20 +365,9 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         self,
         user_input: dict[str, Any] | None = None,
     ) -> ConfigFlowResult:
-        """Store discovered meters and finish setup or reconfiguration."""
-        assert self._discovery_task is not None
-
-        if user_input is None:
-            # First visit (from async_step_discover after the scan finished):
-            # show a summary form so the flow stays alive and the frontend has
-            # something renderable. Submitting this empty form re-enters here
-            # with user_input={} and completes the flow.
-            return self.async_show_form(
-                step_id="finish",
-                data_schema=vol.Schema({}),
-                description_placeholders=dict(self._progress_placeholders),
-            )
+        """Collect the scan result, then ask how each meter's TCDs are wired."""
         del user_input
+        assert self._discovery_task is not None
 
         try:
             meters = self._discovery_task.result()
@@ -374,7 +383,8 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
             )
 
         assert self._api is not None
-        detected_transport = self._api.detected_transport_mode
+        self._detected_transport = self._api.detected_transport_mode
+        self._tcd_present = await self._async_probe_tcds(meters)
         await self._api.async_close()
 
         if not meters:
@@ -385,14 +395,190 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors={"base": "no_devices_found"},
             )
 
+        self._meters = sorted(meters, key=lambda meter: meter.slave_id)
+        if not any(meter.model_family != "em24" for meter in self._meters):
+            return self._async_finish_entry()
+        return await self.async_step_tcd_layout()
+
+    async def _async_probe_tcds(
+        self,
+        meters: list[MeterInfo],
+    ) -> dict[str, dict[str, bool]]:
+        """Guess which TCD channels are connected, to pre-fill the next form.
+
+        The EM280 reports "No TCD detected" in its CT primary registers. Other
+        models cannot say, so assume TCDA1 is fitted and TCDA2 is not.
+        """
+        assert self._api is not None
+        present: dict[str, dict[str, bool]] = {}
+        for meter in meters:
+            guess = {"a1": True, "a2": False}
+            if meter.model_family == "em280":
+                for channel, address in (
+                    ("a1", CT_PRIMARY_ADDRESS),
+                    ("a2", CT_PRIMARY_2_ADDRESS),
+                ):
+                    try:
+                        registers = await self._api.client.async_read_holding_registers(
+                            meter.slave_id, address, 1, attempts=2
+                        )
+                    except Exception:  # noqa: BLE001
+                        registers = None
+                    if registers:
+                        guess[channel] = registers[0] != 4
+            present[meter.unique_key] = guess
+        return present
+
+    def _stored_layout(self, meter: MeterInfo, channel: str) -> dict[str, Any]:
+        """Return the layout saved for this TCD when reconfiguring, else {}."""
+        if self.source != SOURCE_RECONFIGURE:
+            return {}
+        stored = self._get_reconfigure_entry().data.get(CONF_TCD_LAYOUT, {})
+        return stored.get(meter.unique_key, {}).get(channel, {})
+
+    def _tcd_label(self, meter: MeterInfo, channel: str) -> str:
+        return f"{meter.device_name} - {channel_label(channel)}"
+
+    async def async_step_tcd_layout(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Ask, for every TCD, whether it measures one 3-phase load or 3 lines."""
+        tcd_meters = [meter for meter in self._meters if meter.model_family != "em24"]
+        fields = {
+            self._tcd_label(meter, channel): (meter, channel)
+            for meter in tcd_meters
+            for channel in TCD_CHANNELS
+        }
+
+        if user_input is not None:
+            self._layout = {}
+            self._tcd_queue = []
+            for label, (meter, channel) in fields.items():
+                mode = user_input.get(label, MODE_UNUSED)
+                self._layout.setdefault(meter.unique_key, {})[channel] = {
+                    "mode": mode,
+                    "lines": [],
+                }
+                if mode != MODE_UNUSED:
+                    self._tcd_queue.append((meter, channel))
+            return await self.async_step_tcd_names()
+
+        def default_mode(meter: MeterInfo, channel: str) -> str:
+            stored = self._stored_layout(meter, channel).get("mode")
+            if stored in TCD_MODES:
+                return stored
+            if self._tcd_present.get(meter.unique_key, {}).get(channel):
+                return MODE_THREE_PHASE
+            return MODE_UNUSED
+
+        schema = vol.Schema(
+            {
+                vol.Optional(label, default=default_mode(meter, channel)): (
+                    SelectSelector(
+                        SelectSelectorConfig(
+                            options=list(TCD_MODES),
+                            translation_key="tcd_mode",
+                            mode=SelectSelectorMode.DROPDOWN,
+                        )
+                    )
+                )
+                for label, (meter, channel) in fields.items()
+            }
+        )
+        return self.async_show_form(
+            step_id="tcd_layout",
+            data_schema=schema,
+            description_placeholders={"found": str(len(self._meters))},
+        )
+
+    async def async_step_tcd_names(
+        self,
+        user_input: dict[str, Any] | None = None,
+    ) -> ConfigFlowResult:
+        """Name each line of the next TCD, or link it to an existing device."""
+        if not self._tcd_queue:
+            return self._async_finish_entry()
+        meter, channel = self._tcd_queue[0]
+        mode = self._layout[meter.unique_key][channel]["mode"]
+        line_count = LINES_PER_MODE[mode]
+        names = ["name"] if line_count == 1 else [f"name_{n}" for n in range(1, 4)]
+        devices = (
+            ["device"] if line_count == 1 else [f"device_{n}" for n in range(1, 4)]
+        )
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            device_registry = dr.async_get(self.hass)
+            lines = []
+            for name_key, device_key in zip(names, devices, strict=True):
+                device = device_registry.async_get(user_input.get(device_key) or "")
+                name = (user_input.get(name_key) or "").strip()
+                if device is not None:
+                    # A linked device names the line, whatever was typed.
+                    name = device.name_by_user or device.name or ""
+                lines.append(
+                    {
+                        "name": name or None,
+                        "device_id": device.id if device is not None else None,
+                    }
+                )
+            if not any(line["name"] for line in lines):
+                errors["base"] = "name_required"
+            else:
+                self._layout[meter.unique_key][channel]["lines"] = lines
+                self._tcd_queue.pop(0)
+                return await self.async_step_tcd_names()
+
+        stored = self._stored_layout(meter, channel)
+        stored_lines = stored.get("lines", []) if stored.get("mode") == mode else []
+        fields: dict[Any, Any] = {}
+        for index, (name_key, device_key) in enumerate(
+            zip(names, devices, strict=True)
+        ):
+            line = stored_lines[index] if index < len(stored_lines) else {}
+            suggested = user_input or {}
+            fields[
+                vol.Optional(
+                    name_key,
+                    description={
+                        "suggested_value": suggested.get(name_key, line.get("name"))
+                    },
+                )
+            ] = str
+            fields[
+                vol.Optional(
+                    device_key,
+                    description={
+                        "suggested_value": suggested.get(
+                            device_key, line.get("device_id")
+                        )
+                    },
+                )
+            ] = DeviceSelector()
+        return self.async_show_form(
+            step_id="tcd_names",
+            data_schema=vol.Schema(fields),
+            errors=errors,
+            description_placeholders={
+                "meter": meter.device_name,
+                "tcd": channel_label(channel),
+                "mode": "3-phase load" if line_count == 1 else "3 single-phase lines",
+            },
+        )
+
+    def _async_finish_entry(self) -> ConfigFlowResult:
+        """Create the entry, or update it when reconfiguring."""
         data = {
             **self._build_config(),
-            CONF_DETECTED_TRANSPORT_MODE: detected_transport,
-            CONF_METERS: [asdict(meter) for meter in meters],
+            CONF_DETECTED_TRANSPORT_MODE: self._detected_transport,
+            CONF_METERS: [asdict(meter) for meter in self._meters],
+            CONF_TCD_LAYOUT: self._layout,
         }
         title = f"{GATEWAY_TITLE_PREFIX} {data[CONF_HOST]}"
 
         if self.source == SOURCE_RECONFIGURE:
+            self._sync_tcd_entities()
             return self.async_update_reload_and_abort(
                 self._get_reconfigure_entry(),
                 data=data,
@@ -401,6 +587,44 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
                 unique_id=self.unique_id,
             )
         return self.async_create_entry(title=title, data=data)
+
+    def _sync_tcd_entities(self) -> None:
+        """Apply the new layout to TCD sensors that already exist.
+
+        A registry entry keeps its enabled state across a reload, so the new
+        defaults would otherwise only reach brand-new entities. Sensors the user
+        switched off themselves stay off.
+        """
+        from .registers import SENSOR_DESCRIPTIONS
+
+        registry = er.async_get(self.hass)
+        entry = self._get_reconfigure_entry()
+        for meter in self._meters:
+            if meter.model_family == "em24":
+                continue
+            placements = place_descriptions(
+                SENSOR_DESCRIPTIONS, self._layout.get(meter.unique_key)
+            )
+            for key, placement in placements.items():
+                if not key.startswith("tcd"):
+                    continue
+                entity_id = registry.async_get_entity_id(
+                    "sensor", DOMAIN, f"{meter.unique_key}_{key}"
+                )
+                existing = registry.async_get(entity_id) if entity_id else None
+                if existing is None or existing.config_entry_id != entry.entry_id:
+                    continue
+                wanted = placement.description.entity_registry_enabled_default
+                if (
+                    wanted
+                    and existing.disabled_by is er.RegistryEntryDisabler.INTEGRATION
+                ):
+                    registry.async_update_entity(entity_id, disabled_by=None)
+                elif not wanted and not existing.disabled:
+                    registry.async_update_entity(
+                        entity_id,
+                        disabled_by=er.RegistryEntryDisabler.INTEGRATION,
+                    )
 
     def _reset_discovery(self) -> None:
         """Clear discovery state so the user can retry within the same flow."""

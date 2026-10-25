@@ -22,6 +22,7 @@ CONF_DISCOVERY_PASSES = "discovery_passes"
 CONF_REQUEST_RETRIES = "request_retries"
 CONF_DELAY_BETWEEN_REQUESTS_MS = "delay_between_requests_ms"
 CONF_METERS = "meters"
+CONF_TCD_LAYOUT = "tcd_layout"
 
 DEFAULT_PORT = 502
 DEFAULT_TIMEOUT = 0.75

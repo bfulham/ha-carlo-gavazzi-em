@@ -2,6 +2,8 @@
 
 ## 1.1.4
 
+- Two new setup steps after discovery (also on Reconfigure) for EM270/EM280 meters. First, for each TCD (TCDA1, TCDA2) choose *Not connected*, *One 3-phase load* or *Three single-phase lines*; EM280 meters that report "No TCD detected" are pre-set to Not connected. Second, name each line, or pick an existing Home Assistant device: the sensors are then attached to that device and named from it (a picked device overrides a typed name).
+- The layout decides which TCD sensors are on: a 3-phase load enables Power and Energy (totals); each single-phase line enables its own Power and Energy; an empty single-phase line and a Not connected TCD stay off and are not polled. Sensors are renamed to match (for example "Oven Power", "Oven Energy"). Reconfigure re-applies this to existing TCD sensors, leaving ones you disabled yourself alone.
 - Enabled by default for EM270/EM280: TCDA1 W L1-L3 and TCDA1 kWh L1-L3. These meters only report per-phase power and energy through the TCD A1 channel, so they are the per-phase watts and usage. (Sensors for TCDA2 and everything else stay disabled until you enable them.)
 - Config entry version 3 migration: default sensors that 1.1.3 had disabled (the TCDA1 per-phase ones) are enabled again. Sensors you disabled yourself are left alone.
 

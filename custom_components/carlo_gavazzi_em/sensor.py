@@ -7,6 +7,7 @@ from typing import Any
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -20,12 +21,7 @@ from .modbus import (
     decode_uint32_lsw_msw,
     is_missing_32,
 )
-from .registers import (
-    SENSOR_DESCRIPTIONS,
-    SENSOR_DESCRIPTIONS_EM24,
-    RegisterSensorDescription,
-    map_option,
-)
+from .registers import RegisterSensorDescription, map_option
 
 
 async def async_setup_entry(
@@ -39,13 +35,11 @@ async def async_setup_entry(
     meters: list[MeterInfo] = runtime["meters"]
 
     async_add_entities(
-        CarloGavazziSensor(coordinator, meter, description)
-        for meter in meters
-        for description in (
-            SENSOR_DESCRIPTIONS_EM24
-            if meter.model_family == "em24"
-            else SENSOR_DESCRIPTIONS
+        CarloGavazziSensor(
+            coordinator, meter, placement.description, placement.device_id
         )
+        for meter in meters
+        for placement in coordinator.placements[meter.unique_key].values()
     )
 
 
@@ -59,12 +53,15 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
         coordinator: CarloGavazziCoordinator,
         meter: MeterInfo,
         description: RegisterSensorDescription,
+        linked_device_id: str | None = None,
     ) -> None:
         super().__init__(coordinator)
         self.entity_description = description
         self._meter = meter
         self._attr_unique_id = f"{meter.unique_key}_{description.key}"
-        self._attr_device_info = DeviceInfo(
+        self._attr_device_info = self._linked_device_info(
+            coordinator, linked_device_id
+        ) or DeviceInfo(
             identifiers={(DOMAIN, meter.unique_key)},
             name=meter.device_name,
             manufacturer="Carlo Gavazzi",
@@ -73,6 +70,23 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
             serial_number=meter.serial_number,
             sw_version=meter.firmware_version,
         )
+
+    @staticmethod
+    def _linked_device_info(
+        coordinator: CarloGavazziCoordinator,
+        device_id: str | None,
+    ) -> DeviceInfo | None:
+        """Attach to the device chosen for this TCD line, if it still exists."""
+        if device_id is None:
+            return None
+        device = dr.async_get(coordinator.hass).async_get(device_id)
+        if device is None:
+            return None
+        if device.identifiers:
+            return DeviceInfo(identifiers=set(device.identifiers))
+        if device.connections:
+            return DeviceInfo(connections=set(device.connections))
+        return None
 
     @property
     def available(self) -> bool:
