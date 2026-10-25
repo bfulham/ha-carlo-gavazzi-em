@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import slugify
 
 from .const import DOMAIN
 from .registers import DEFAULT_ENABLED_KEYS, SENSOR_DESCRIPTIONS
-from .tcd import board_name, place_descriptions
+from .tcd import board_name, legacy_entity_name, place_descriptions
 
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
@@ -34,15 +36,16 @@ def sync_entities(
     layout: dict[str, Any],
     old_layout: dict[str, Any] | None = None,
 ) -> None:
-    """Apply the layout's defaults to sensors that already exist.
+    """Apply the layout's defaults and entity IDs to sensors that already exist.
 
     A registry entry keeps its enabled state, so new defaults would otherwise only
     reach brand-new sensors. TCD sensors and the default meter-wide sensors follow
     the layout; a sensor the user disabled themselves is never switched back on.
 
-    With old_layout (a reconfigure), a line sensor whose entity ID is still the one
-    the previous layout produced is renamed to the one the new layout produces, if
-    that ID is free. An ID the user changed by hand is left alone.
+    A line sensor is also renamed to the entity ID the layout produces when its
+    current ID is one the integration generated: the ID the previous layout gave it
+    (old_layout), or the one 1.2.0 gave it. An ID the user changed is left alone, and
+    so is one whose replacement is already taken.
     """
     registry = er.async_get(hass)
     for meter in meters:
@@ -58,9 +61,9 @@ def sync_entities(
             existing = registry.async_get(entity_id) if entity_id else None
             if existing is None or existing.config_entry_id != entry.entry_id:
                 continue
-            if placement.meta and old_layout is not None:
-                _rename_if_unchanged(
-                    registry, meter, key, existing, placement, layout, old_layout
+            if placement.meta:
+                _rename_if_generated(
+                    hass, registry, meter, existing, placement, layout, old_layout
                 )
             wanted = placement.description.entity_registry_enabled_default
             if wanted and existing.disabled_by is er.RegistryEntryDisabler.INTEGRATION:
@@ -71,27 +74,47 @@ def sync_entities(
                 )
 
 
-def _rename_if_unchanged(
+def _base(entity_id: str) -> str:
+    """Strip the _2, _3 suffix Home Assistant adds to a clashing entity ID."""
+    return re.sub(r"_\d+$", "", entity_id)
+
+
+def _rename_if_generated(
+    hass: HomeAssistant,
     registry: er.EntityRegistry,
     meter: MeterInfo,
-    key: str,
     existing: er.RegistryEntry,
     placement: Any,
     layout: dict[str, Any],
-    old_layout: dict[str, Any],
+    old_layout: dict[str, Any] | None,
 ) -> None:
-    old = place_descriptions(SENSOR_DESCRIPTIONS, old_layout.get(meter.unique_key))[key]
-    if not old.meta:
-        return
-    previous = line_entity_id(
-        board_name(old_layout.get(meter.unique_key)), meter, old.meta
-    )
+    key = placement.description.key
     wanted = line_entity_id(
         board_name(layout.get(meter.unique_key)), meter, placement.meta
     )
-    if (
-        existing.entity_id == previous
-        and wanted != previous
-        and registry.async_get(wanted) is None
+    if existing.entity_id == wanted:
+        return
+
+    generated = set()
+    if old_layout is not None:
+        old = place_descriptions(SENSOR_DESCRIPTIONS, old_layout.get(meter.unique_key))
+        if old[key].meta:
+            generated.add(
+                line_entity_id(
+                    board_name(old_layout.get(meter.unique_key)), meter, old[key].meta
+                )
+            )
+    stock = next(item for item in SENSOR_DESCRIPTIONS if item.key == key)
+    legacy = legacy_entity_name(stock, (old_layout or layout).get(meter.unique_key))
+    if legacy is not None:
+        name, device_id = legacy
+        device = dr.async_get(hass).async_get(device_id) if device_id else None
+        device_name = (
+            (device.name_by_user or device.name) if device else meter.device_name
+        )
+        generated.add("sensor." + slugify(f"{device_name} {name}"))
+
+    if _base(existing.entity_id) in {_base(item) for item in generated} and (
+        registry.async_get(wanted) is None
     ):
         registry.async_update_entity(existing.entity_id, new_entity_id=wanted)

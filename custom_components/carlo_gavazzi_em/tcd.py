@@ -160,3 +160,52 @@ def _place_tcd_sensor(
             ),
         },
     )
+
+
+_LEGACY_METRICS = {
+    "W": "Power",
+    "kWh": "Energy",
+    "A": "Current",
+    "VA": "Apparent power",
+    "VAR": "Reactive power",
+    "kvarh": "Reactive energy",
+    "PF": "Power factor",
+}
+
+
+def legacy_entity_name(
+    description: RegisterSensorDescription,
+    meter_layout: dict[str, Any] | None,
+) -> tuple[str, str | None] | None:
+    """Return (entity name, linked device id) as version 1.2.0 named a line sensor.
+
+    1.2.0 did not set entity IDs, so Home Assistant built them from the device name
+    plus this entity name. Returns None for sensors 1.2.0 did not rename.
+    """
+    match = _KEY.fullmatch(description.key)
+    config = (meter_layout or {}).get(match.group(1)) if match else None
+    if match is None or not config:
+        return None
+    channel, field = match.groups()
+    lines = config.get("lines") or []
+    phase = _PHASE.search(field)
+    mode = config.get("mode")
+    if mode == MODE_THREE_PHASE and lines and lines[0].get("name"):
+        line, tag = lines[0], f" L{phase.group(1)}" if phase else ""
+    elif mode == MODE_SINGLE_PHASE and phase and int(phase.group(1)) <= len(lines):
+        line, tag = lines[int(phase.group(1)) - 1], ""
+        if not line.get("name"):
+            return None
+    else:
+        return None
+    base = _NAME_TAIL.sub(
+        "", description.name.removeprefix(f"{channel_label(channel)} ")
+    )
+    metric = _LEGACY_METRICS.get(base, base) + tag
+    if line.get("short_name"):
+        name = f"{line['short_name']} {metric}"
+    elif line.get("device_id"):
+        name = metric
+    else:
+        name = f"{line['name']} {metric}"
+    return name, line.get("device_id")
