@@ -57,7 +57,7 @@
       },
       "tcd_board": {
         "title": "Distribution board for {meter}",
-        "description": "Which distribution board is {meter} on (for example DB1)? Pick an existing device or type a name. The meter's device takes this name and it starts every sensor's entity ID, e.g. sensor.db1_r1_w. Leave both empty to keep the default name.",
+        "description": "Which distribution board is {meter} on (for example DB1)? Pick an existing device or type a name. It starts every sensor's entity ID, e.g. sensor.db1_r1_w, and is recorded on the sensor; it does not appear in the sensor names. Leave both empty to use the meter's name.",
         "data": {
           "board_name": "Distribution board name",
           "board_device": "Or take the name from a device"

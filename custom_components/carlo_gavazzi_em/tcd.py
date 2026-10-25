@@ -142,9 +142,9 @@ def _place_tcd_sensor(
 
     metric = _metric(description.name, channel)
     tag = f" L{phase.group(1)}" if phase and mode == MODE_THREE_PHASE else ""
-    # "<long name> A"; the short name only labels a line that has no long name.
-    # A linked device supplies the long name itself (has_entity_name).
-    name = f"{metric}{tag}" if line.get("device_id") else f"{label} {metric}{tag}"
+    # "<long name> A"; the short name only labels a line that has no long name. The
+    # board is only part of the entity ID, never of the name.
+    name = f"{label} {metric}{tag}"
     return Placement(
         replace(description, name=name, entity_registry_enabled_default=wanted),
         line.get("device_id"),

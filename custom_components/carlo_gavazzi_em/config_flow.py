@@ -638,8 +638,13 @@ class CarloGavazziConfigFlow(ConfigFlow, domain=DOMAIN):
         title = f"{GATEWAY_TITLE_PREFIX} {data[CONF_HOST]}"
 
         if self.source == SOURCE_RECONFIGURE:
+            entry = self._get_reconfigure_entry()
             sync_entities(
-                self.hass, self._get_reconfigure_entry(), self._meters, self._layout
+                self.hass,
+                entry,
+                self._meters,
+                self._layout,
+                old_layout=entry.data.get(CONF_TCD_LAYOUT, {}),
             )
             return self.async_update_reload_and_abort(
                 self._get_reconfigure_entry(),

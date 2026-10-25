@@ -11,10 +11,10 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
-from homeassistant.util import slugify
 
 from .const import DOMAIN, MeterInfo
 from .coordinator import CarloGavazziCoordinator
+from .layout_sync import line_entity_id
 from .modbus import (
     decode_int16,
     decode_int32_lsw_msw,
@@ -61,11 +61,11 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
         self.entity_description = description
         self._meta = placement.meta
         if placement.meta:
-            # sensor.<board>_<short name or name>_<w|a|v|kwh>[_l1], used when the
-            # entity is first added; later renames in the UI are left alone.
-            board = coordinator.boards.get(meter.unique_key) or meter.device_name
-            self.entity_id = "sensor." + slugify(
-                f"{board}_{placement.meta['object_id']}"
+            # The name already carries the line, so skip the device-name prefix.
+            self._attr_has_entity_name = False
+            # Only used when the entity is first added; see layout_sync for renames.
+            self.entity_id = line_entity_id(
+                coordinator.boards.get(meter.unique_key), meter, placement.meta
             )
         self._meter = meter
         self._attr_unique_id = f"{meter.unique_key}_{description.key}"
@@ -73,7 +73,7 @@ class CarloGavazziSensor(CoordinatorEntity[CarloGavazziCoordinator], SensorEntit
             coordinator, placement.device_id
         ) or DeviceInfo(
             identifiers={(DOMAIN, meter.unique_key)},
-            name=coordinator.boards.get(meter.unique_key) or meter.device_name,
+            name=meter.device_name,
             manufacturer="Carlo Gavazzi",
             model=meter.model_name,
             model_id=str(meter.identification_code),
