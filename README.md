@@ -2,8 +2,10 @@
 
 A local, read-only Home Assistant custom integration for Carlo Gavazzi **EM270 X**, **EM270 W**, **EM280**, and **EM24** energy meters connected through a transparent Modbus RTU-to-Modbus TCP gateway.
 
-> [!IMPORTANT]
-> `v1.0.0` is a clean rebuild intended to replace the earlier prototype repository. The code has been reviewed against the supplied EM270/EM280 communication protocol and includes automated import, lint, HACS, and hassfest checks, but it still needs testing with physical meters and a real gateway.
+> [!NOTE]
+> The integration is verified against the supplied EM270/EM280 protocol documentation and by automated import, lint, HACS and hassfest checks. Hardware test reports are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Documentation:** [docs/README.md](docs/README.md) covers installation, the gateway, every setup screen, TCD wiring and naming, the full sensor list, how the code works and troubleshooting.
 
 ## Features
 
@@ -15,11 +17,13 @@ A local, read-only Home Assistant custom integration for Carlo Gavazzi **EM270 X
 - Automatic probing of standard Modbus TCP and RTU-over-TCP framing, or an explicit user-selected mode.
 - Automatic EM270/EM280/EM24 model identification.
 - Serial number, model, model ID, and firmware stored as Home Assistant device information rather than duplicate sensors.
-- All documented read-only measurement and diagnostic registers available as sensors for EM270/EM280 and EM24 meters; volts, amps, watts and energy used are enabled by default and only enabled sensors are polled.
+- All documented read-only measurement and diagnostic registers available as sensors for EM270/EM280 (105) and EM24 (64) meters; only a small default set is enabled and **only enabled sensors are polled**.
+- TCD support for EM270/EM280: per TCD choose *one 3-phase load* or *three single-phase lines*, name each line (long name, short name, or link an existing device) and a distribution board, and get W, kWh (on) and A, V (off) sensors with predictable entity IDs `sensor.<board>_<short name>_<w|a|v|kwh>`.
+- A recommended update interval based on how many sensors are enabled.
 - Configurable update interval, timeout, retry count, and delay between requests.
-- Contiguous reads limited to the protocol maximum of 18 registers.
+- Contiguous reads limited to the protocol maximum of 18 registers (11 on the EM24).
 - LSW/MSW 32-bit decoding and handling for the documented unsupported, overflow, and missing-TCD values.
-- Reconfigure/rescan flow and automatically reloading options flow.
+- Reconfigure/rescan flow (pre-filled from the previous setup) and an automatically reloading options flow.
 - Redacted diagnostics.
 - No write, reset, or programming commands.
 
@@ -58,34 +62,31 @@ Restart Home Assistant before opening the config flow.
 
 ## Setup
 
-The first page asks for:
+**Settings -> Devices & services -> Add integration -> Carlo Gavazzi EM.** The dialog asks, in order:
 
-- gateway host or IP address;
-- TCP port, normally `502`;
-- polling interval;
-- whether to show advanced settings; and
-- whether to restrict the default `1–247` scan.
+1. **Gateway** - host/IP, TCP port (502), update interval (5-3600 s, default 10), and tick-boxes for advanced settings and a restricted address range.
+2. *(optional)* **Advanced settings** - request timeout (0.75 s), polling retries (2), delay between requests (10 ms), TCP framing (Auto detect / Modbus TCP / RTU over TCP).
+3. *(optional)* **Address range** - first and last slave address (default 1-247).
+4. **Scan** - three passes over the range with live progress.
+5. **TCD wiring** (EM270/EM280 only) - per TCD: *Not connected*, *One 3-phase load* or *Three single-phase lines*.
+6. **Distribution board** - once per meter: a name or an existing device (starts the entity IDs).
+7. **Line names** - per TCD: name, short name (R1, W1, ...) or a linked device per line. Empty lines are not connected; *Skip the rest* sets the remaining TCDs up later.
 
-Advanced settings provide:
-
-- request timeout;
-- retries after the first polling attempt;
-- delay between requests; and
-- Auto detect, Modbus TCP, or RTU-over-TCP framing.
-
-A full scan can take several minutes because unused RTU addresses may each wait for the configured timeout. Restrict the range when the expected slave IDs are known.
+A full scan can take several minutes because unused RTU addresses each wait for the timeout. Restrict the range when the expected slave IDs are known. Every field is documented in [docs/setup.md](docs/setup.md).
 
 ## Device and entity behaviour
 
-Each discovered meter is represented as its own Home Assistant device. The meter serial number is used as device metadata and as the stable device identifier when available. A gateway/address fallback identifier is used when the serial number cannot be read. EM24 meters expose no serial number or secondary address, so they always use the gateway/address fallback identifier.
+Each discovered meter is one Home Assistant device. Its serial number, model, model ID and firmware are device information, not sensors. The device identifier is the serial number when it can be read, otherwise `gateway:<host>:<port>:slave:<address>` (always the latter on the EM24, which exposes no serial number).
 
-Only the useful sensors are enabled by default: phase voltages, phase currents, power (W) and energy used (kWh import, plus kWh export on the EM24). On the EM270/EM280 the per-phase power and energy come from the TCD A1 channel, so `TCDA1 W L1-L3` and `TCDA1 kWh L1-L3` are on too (they read as unavailable if no TCD is connected). Setup (and Reconfigure) then asks how each TCD is wired - one 3-phase load or three single-phase lines - and for a name or a linked device per line, and switches the TCD sensors on or off to match (a 3-phase load: total power and energy; a single-phase line: its own power and energy). The rest of the documented read-only entity set (VA, VAR, power factor, demand, TCD channels and diagnostics) is created for every meter but **disabled**, and a disabled entity is **not polled**, so it adds no traffic on the RS-485 bus. Enable any of them under Settings -> Devices & services -> the entity -> Settings; the integration reloads and starts polling that register. Variables that are unavailable for a specific model, firmware, measuring system, TCD arrangement, or SUM/Virtual configuration remain unavailable instead of reporting a false value.
+**Defaults.** A meter with no TCD wired has phase voltages, phase currents, power and energy used on (EM270/EM280 also `TCDA1 W` and `TCDA1 kWh` per phase; EM24 also export energy). Once a TCD is wired, the meter-wide sensors are switched off, and each named line gets **W and kWh on, A and V off** (a 3-phase load gets one W and one kWh total). Everything else is created disabled, and **a disabled sensor is not polled**, so it adds no traffic to the RS-485 bus. Enable any sensor under Settings -> Devices & services -> Entities -> the sensor -> Settings; the integration reloads and starts polling that register. Values the meter reports as not available stay *unavailable* instead of showing a wrong number.
+
+How TCD lines are named, which entity IDs they get, and when those IDs are renamed on Reconfigure: [docs/tcd-lines.md](docs/tcd-lines.md). Every sensor, register and scaling: [docs/sensors.md](docs/sensors.md).
 
 ## Reconfigure and options
 
-Use **Reconfigure** on the integration entry to change the gateway address, framing mode, scan range, or to rescan the RTU bus.
+Use **Reconfigure** on the integration entry to change the gateway address, framing mode, scan range, TCD wiring, names and boards, or to rescan the RTU bus. Everything is pre-filled from the previous setup. Reconfigure re-applies the TCD defaults, so sensors you enabled by hand among the TCD and meter-wide sensors may be switched off again.
 
-Use **Configure** to change the normal update interval, timeout, retry count, and request delay without rescanning.
+Use **Configure** to change the update interval, timeout, retry count and request delay without rescanning. Its text shows how many sensors are enabled, how many Modbus reads a poll takes, and the recommended (shortest sustainable) update interval.
 
 ## Gateway preparation
 
@@ -98,6 +99,8 @@ Before setup, configure the gateway serial side to match the meters:
 - a suitable RTU response timeout.
 
 Also verify RS485 A/B polarity, termination, and unique slave addresses.
+
+Techbase NPE/iMod gateways can be turned into a plain read-only Modbus TCP bridge with the scripts in [`contrib/`](contrib/); see [docs/gateway.md](docs/gateway.md).
 
 ## Troubleshooting
 
@@ -114,9 +117,11 @@ Confirm that `/config/custom_components/carlo_gavazzi_em/manifest.json` reports 
 5. Increase the request timeout and inter-request delay.
 6. Restrict the scan to the known address range while testing.
 
+See also [docs/troubleshooting.md](docs/troubleshooting.md).
+
 ### Reporting an issue
 
-Download diagnostics from the integration entry and attach them to a GitHub issue. Remove any network information you do not want to publish.
+Download diagnostics from the integration entry and attach them to a GitHub issue. The gateway host and serial numbers are redacted, but the saved TCD line names, short names and board names are not, so review the file first.
 
 ## Supported identification values
 
@@ -154,6 +159,8 @@ ruff format --check .
 ruff check .
 python -m compileall -q custom_components/carlo_gavazzi_em scripts
 ```
+
+See [docs/development.md](docs/development.md).
 
 GitHub Actions additionally run Home Assistant hassfest, HACS validation, and a real config-flow import smoke test.
 

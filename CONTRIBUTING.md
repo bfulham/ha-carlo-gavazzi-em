@@ -13,9 +13,11 @@ Hardware test reports are especially valuable for this integration.
 
 ```bash
 python -m pip install -r requirements-dev.txt
-ruff format .
+ruff format --check .      # use `ruff format .` to fix
 ruff check .
-python -m compileall custom_components/carlo_gavazzi_em
+python -m compileall -q custom_components/carlo_gavazzi_em scripts
 ```
+
+These are the checks CI runs. More in [docs/development.md](docs/development.md).
 
 Keep the integration read-only unless a future change has a clear safety review and explicit user confirmation for every write or reset operation.
